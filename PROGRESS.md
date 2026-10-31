@@ -45,6 +45,7 @@
 - [ ] `internal/database/postgres.go` เชื่อมต่อ DB
 - [ ] เพิ่ม `DATABASE_URL` ใน config
 - [ ] โหลดค่าจากไฟล์ `.env` ตอนพัฒนา (เช่นผ่าน Makefile)
+- [x] migration: `users` → `000001_create_users` (ผู้ใช้รัน SQL เองใน DBeaver)
 - [ ] migration: `company`, `products`, `product_costs`, `stock_movements`, `transactions`, `invoices`, `invoice_items`, `invoice_numbers`
 
 ## Phase 3 — Features (รอคำสั่ง)
@@ -91,6 +92,9 @@
 
 | วันที่ | ทำอะไร | หมายเหตุ |
 |---|---|---|
+| 2026-10-31 | เปิด `pgcrypto` ใน DB `costbook` + เพิ่มผู้ใช้ทดสอบ `admin@costbook.com` (รหัส `1234`, ชื่อ Admin CostBook) — hash เป็น bcrypt `$2a$10$` เช็ครหัสผ่านแล้วถูก | ใช้ทดสอบในเครื่องเท่านั้น ยังไม่มี column role (ทุกคนสิทธิ์เท่ากัน) |
+| 2026-10-31 | `sql/users.sql`: คำสั่ง select / insert / update / delete ของตาราง `users` ไว้ใช้ใน DBeaver — insert / เปลี่ยนรหัสผ่านใช้ `crypt()` ของ `pgcrypto` (bcrypt แบบเดียวกับ Go) — ทดสอบทั้งไฟล์ใน transaction แล้ว ROLLBACK ผ่าน | ผู้ใช้รัน migration `users` เองแล้ว / ยังไม่ได้เปิด `pgcrypto` จริง (ผู้ใช้รันเองครั้งแรก) |
+| 2026-10-31 | migration ตาราง `users` (id, email, password_hash, first_name, last_name, created_at, updated_at) — ทดสอบรันใน transaction แล้ว ROLLBACK ผ่าน | ใช้ `IF NOT EXISTS` → รันเองใน DBeaver ก่อน แล้วภายหลังใช้ `golang-migrate` ก็ไม่พัง / ยังไม่มี API login |
 | 2026-10-31 | ผู้ใช้ติดตั้ง PostgreSQL 17.11 (Homebrew) เปิด service และสร้าง database `costbook` แล้ว | ยังไม่ได้ลง `golang-migrate` |
 | 2026-10-31 | เปลี่ยนจาก `net/http` เป็น **Gin**: แก้ `docs/ARCHITECTURE.md`, `CLAUDE.md`, skill `simple-code` / `unit-test-check` และแผน Phase 1 (ตัด `WriteJSON` ใช้ `c.JSON` แทน, เพิ่ม `RegisterRoutes`, `NoRoute`) และ Phase 4 (ตัด `middleware/logger.go` เพราะ `gin.Default()` มี logger แล้ว) | ยังไม่ได้เพิ่ม package / ยังไม่มีโค้ด — ไม่กระทบ Flutter (path และ JSON เหมือนเดิม) |
 | 2026-10-31 | ลบโค้ด Go ทั้งหมดออก (main, config, router, health, CORS, helpers, utils และ test) เหลือแค่เอกสาร + โครงโฟลเดอร์เปล่า | ผู้ใช้จะสั่งทำ API ทีละส่วนเอง |

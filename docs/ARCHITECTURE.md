@@ -94,7 +94,8 @@ api-Costbook/
 │       ├── transaction/
 │       ├── invoice/
 │       └── dashboard/
-├── migrations/               ไฟล์ SQL เช่น 000001_create_products.up.sql / .down.sql
+├── migrations/               ไฟล์ SQL สร้าง / แก้ตาราง เช่น 000001_create_users.up.sql / .down.sql
+├── sql/                      คำสั่ง SQL ไว้ copy ไปรันเองใน DBeaver (select / insert / update / delete) 1 ไฟล์ต่อ 1 ตาราง — API ไม่ได้ใช้
 ├── docs/ARCHITECTURE.md      ไฟล์นี้
 ├── PROGRESS.md               ทำถึงไหนแล้ว
 └── go.mod
@@ -211,7 +212,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | `invoices` | ใบกำกับภาษี | id, invoice_no, issue_date, status, ข้อมูลผู้ขาย + ผู้ซื้อ, subtotal, vat, total |
 | `invoice_items` | รายการในใบกำกับ | id, invoice_id, product_id, name, quantity, unit_price, amount |
 | `invoice_numbers` | ตัวรันเลขที่ใบกำกับ | year, last_number |
-| `users` (Phase 4) | ผู้ใช้ | id, email, password_hash |
+| `users` | ผู้ใช้ที่ login ได้ (migration `000001_create_users`) | id, email (ห้ามซ้ำ), password_hash (bcrypt), first_name, last_name |
 
 - ทุกตารางมี `created_at` และ `updated_at`
 - `cost_price` = `utils.CostPerUnit(วัตถุดิบ, ค่าแรง, ค่าใช้จ่ายอื่น, batch_quantity)` คำนวณใหม่ทุกครั้งที่ `product_costs` เปลี่ยน

@@ -68,13 +68,47 @@ func keysOf(properties map[string]any) []string {
 	return keys
 }
 
-// newTool เครื่องมือที่เราเขียนเอง (required = ช่องที่ต้องส่ง)
-func newTool(name, description string, properties map[string]any, required ...string) anthropic.BetaToolUnionParam {
-	return anthropic.BetaToolUnionParam{OfTool: &anthropic.BetaToolParam{
-		Name:        name,
-		Description: anthropic.String(description),
-		InputSchema: anthropic.BetaToolInputSchemaParam{Properties: properties, Required: required},
-	}}
+// toolSpec เครื่องมือของแชท 1 ตัว เขียนครั้งเดียว ใช้ได้ทั้ง Claude และ Gemini
+// required = ช่องที่ต้องส่ง
+type toolSpec struct {
+	name        string
+	description string
+	properties  map[string]any
+	required    []string
+}
+
+func newTool(name, description string, properties map[string]any, required ...string) toolSpec {
+	return toolSpec{name: name, description: description, properties: properties, required: required}
+}
+
+// claudeTools แปลงเป็นรูปแบบเครื่องมือของ Claude
+func claudeTools(specs []toolSpec) []anthropic.BetaToolUnionParam {
+	tools := []anthropic.BetaToolUnionParam{}
+	for _, spec := range specs {
+		tools = append(tools, anthropic.BetaToolUnionParam{OfTool: &anthropic.BetaToolParam{
+			Name:        spec.name,
+			Description: anthropic.String(spec.description),
+			InputSchema: anthropic.BetaToolInputSchemaParam{Properties: spec.properties, Required: spec.required},
+		}})
+	}
+	return tools
+}
+
+// geminiTools แปลงเป็น functionDeclarations ของ Gemini (เครื่องมือที่ไม่มีช่องให้กรอก ไม่ต้องส่ง parameters)
+func geminiTools(specs []toolSpec) []map[string]any {
+	declarations := []map[string]any{}
+	for _, spec := range specs {
+		declaration := map[string]any{"name": spec.name, "description": spec.description}
+		if len(spec.properties) > 0 {
+			parameters := map[string]any{"type": "object", "properties": spec.properties}
+			if len(spec.required) > 0 {
+				parameters["required"] = spec.required
+			}
+			declaration["parameters"] = parameters
+		}
+		declarations = append(declarations, declaration)
+	}
+	return []map[string]any{{"functionDeclarations": declarations}}
 }
 
 // newStrictTool เครื่องมือที่ Claude ต้องส่งข้อมูลตรงตาม schema เป๊ะ (strict) — ใช้กับผลเช็คราคาตลาด
@@ -137,7 +171,7 @@ var productIDProp = stringProp("id ของสินค้า (ดูจาก 
 var reasonProp = stringProp("เหตุผลสั้น ๆ ว่าทำไมเสนองานนี้ (ผู้ใช้เห็นข้อความนี้)")
 
 // chatTools อ่านข้อมูล (get_* / list_*) ทำงานทันที, เสนองาน (propose_*) ต้องให้ผู้ใช้กดยืนยัน
-var chatTools = []anthropic.BetaToolUnionParam{
+var chatTools = []toolSpec{
 	newTool("get_shop_info", "ข้อมูลร้าน: ชื่อ จด VAT ไหม ราคาขายรวม VAT ไหม และช่องข้อมูลเพิ่มเติมของสินค้า", map[string]any{}),
 	newTool("list_products", "สินค้าทั้งหมด: id รหัส ชื่อ หมวด หน่วย ต้นทุน ราคาขาย คงเหลือ ขั้นต่ำ นับสต็อกไหม ช่องเพิ่มเติม", map[string]any{}),
 	newTool("get_cost_sheet", "ใบต้นทุนของสินค้า: รายการต้นทุน จำนวนผลิตต่อรอบ ต้นทุนต่อหน่วย", map[string]any{

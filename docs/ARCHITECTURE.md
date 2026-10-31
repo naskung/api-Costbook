@@ -98,7 +98,7 @@ api-Costbook/
 │       ├── transaction/      รายรับ-รายจ่าย + สรุปรายเดือน
 │       ├── invoice/          เอกสารขาย (ใบกำกับภาษี / ใบเสร็จ): ออกใบ (รันเลข + ตัด stock + บันทึกรายรับ) / ยกเลิก
 │       ├── dashboard/        ตัวเลขสรุปหน้าแรก + กราฟ / กำไรขั้นต้น / ขายดี / เทียบตลาด (อ่านอย่างเดียว ไม่มีตารางของตัวเอง)
-│       └── ai/               Claude: เช็คราคาตลาด (ตาราง market_checks) + แชทผู้ช่วย (claude.go, prompt.go, tools.go, toolbox.go, market.go, chat.go, shop.go)
+│       └── ai/               AI (Claude / Gemini ฟรี): เช็คราคาตลาด (ตาราง market_checks) + แชทผู้ช่วย + key ของร้าน (assistant.go, claude.go, gemini.go, prompt.go, tools.go, toolbox.go, market.go, chat.go, shop.go)
 ├── migrations/               ไฟล์ SQL สร้าง / แก้ตาราง เช่น 000001_create_users.up.sql / .down.sql
 ├── sql/                      คำสั่ง SQL ไว้ copy ไปรันเองใน DBeaver (select / insert / update / delete) 1 ไฟล์ต่อ 1 ตาราง — API ไม่ได้ใช้
 ├── docs/
@@ -167,14 +167,14 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 | status error | เมื่อไหร่ | ตัวอย่าง code |
 |---|---|---|
-| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `month_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid` |
+| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `month_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid`, `ai_key_format_invalid`, `ai_key_invalid` (ตอนบันทึก key แล้ว Anthropic ไม่รับ) |
 | 401 | ยังไม่ login / token ผิดหรือหมดอายุ / login ไม่ผ่าน | `unauthorized`, `invalid_credentials` |
 | 404 | ไม่เจอข้อมูล / ไม่มี path นี้ / id ไม่ใช่ UUID | `product_not_found`, `transaction_not_found`, `invoice_not_found`, `logo_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
-| 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled`, `company_tax_id_required` |
+| 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled`, `company_tax_id_required`, `ai_search_unavailable` (AI ฟรีค้นเว็บไม่ได้ → เช็คราคาตลาดไม่ได้) |
 | 422 | AI ปฏิเสธคำขอ (นโยบายความปลอดภัย) | `ai_refused` |
 | 500 | server พัง | `server_error` (ใช้ `helpers.ServerError` → error จริงลง log ไม่ส่งให้ client) |
 | 502 | AI ตอบไม่ครบ / เรียก Claude ไม่สำเร็จ | `ai_no_result`, `ai_error` (รายละเอียดลง log) |
-| 503 | ยังไม่ใส่ API key / key ผิด / Claude ไม่ว่าง | `ai_not_configured`, `ai_key_invalid`, `ai_busy` |
+| 503 | ไม่มี AI ให้ใช้ / key ผิด / โควตาฟรีหมด / AI ไม่ว่าง | `ai_not_configured`, `ai_key_invalid`, `ai_quota_exceeded` (Gemini ฟรีใช้เกินโควตา), `ai_busy` |
 | 504 | AI ใช้เวลานานเกิน | `ai_timeout` |
 
 ---
@@ -223,7 +223,9 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `POST /api/v1/invoices` | ออกเอกสารขาย — ร้านจด VAT ได้ใบกำกับภาษี ไม่จด ได้ใบเสร็จ |
 | | `POST /api/v1/invoices/{id}/cancel` | ยกเลิกเอกสาร |
 | dashboard ✅ | `GET /api/v1/dashboard?month=2026-10` | ตัวเลขสรุปหน้าแรก + ยอดขายรายวัน / ย้อนหลัง 6 เดือน / กำไรขั้นต้น / ขายดี / ตามหมวด / มูลค่าสต็อก / เทียบราคาตลาด |
-| ai ✅ | `GET /api/v1/ai/status` | เปิดใช้ AI ได้ไหม (มี `ANTHROPIC_API_KEY` หรือยัง) |
+| ai ✅ | `GET /api/v1/ai/status` | ตอนนี้ใช้ AI ตัวไหน (Claude / Gemini ฟรี / ไม่มี) ค้นเว็บได้ไหม ร้านใส่ key เองไหม |
+| | `PUT /api/v1/ai/key` | ร้านใส่ key ของ Claude เอง (ลอง key กับ Anthropic ก่อน แล้วเก็บแบบเข้ารหัส) |
+| | `DELETE /api/v1/ai/key` | ลบ key ของร้าน → กลับไปใช้ key ใน `.env` หรือ AI ฟรี |
 | | `POST /api/v1/ai/chat` | แชทกับผู้ช่วย AI (ส่งประวัติแชททั้งหมด ได้คำตอบ + งานที่ AI เสนอ) |
 | | `GET /api/v1/products/{id}/market` | ผลเช็คราคาตลาดครั้งล่าสุด (ไม่เสียเงิน) |
 | | `POST /api/v1/products/{id}/market` | ให้ AI ค้นราคาตลาดใหม่แล้วบันทึกผล (มีค่าใช้จ่าย 1–3 นาที) |
@@ -290,10 +292,34 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 - เทียบราคาตลาด: ใช้ราคาที่ลูกค้าจ่าย (ร้านจด VAT ที่ตั้งราคาไม่รวม VAT → บวก VAT ก่อน) เทียบกับช่วงราคาปลีกจากการเช็คครั้งล่าสุด → `below` / `within` / `above` / `unknown`
 - % เทียบเดือนก่อน Flutter คิดเอง จาก `previous`
 
-**AI** (`features/ai`) ใช้ Claude รุ่น `claude-opus-5-5` ผ่าน SDK ทางการ (`ai/claude.go`) — ไม่มี `ANTHROPIC_API_KEY` = ปิด AI (ตอบ 503 `ai_not_configured`) ส่วนอื่นใช้ได้ปกติ
+**AI** (`features/ai`) มี 2 ตัว เลือกให้เองทุกคำขอ (`pickProvider` ใน `ai/assistant.go`) ตามลำดับ:
+
+1. key ของ Claude ที่ร้านใส่ในหน้าตั้งค่า (`company.ai_key` เข้ารหัสไว้)
+2. `ANTHROPIC_API_KEY` ใน `.env`
+3. `GEMINI_API_KEY` ใน `.env` → **Gemini ฟรี** (ค่าเริ่มต้นเมื่อร้านไม่มี key)
+4. ไม่มีเลย → ปิด AI (ตอบ 503 `ai_not_configured`) ส่วนอื่นใช้ได้ปกติ
+
+| | Claude (`claude-opus-5-5`, SDK ทางการ `ai/claude.go`) | Gemini ฟรี (`gemini-3.8-flash`, REST `ai/gemini.go`) |
+|---|---|---|
+| แชท + อ่านข้อมูลร้าน + เสนองาน | ได้ | ได้ (เครื่องมือชุดเดียวกัน) |
+| ค้นเว็บ → เช็คราคาตลาด | ได้ | **ไม่ได้** (รุ่นฟรีไม่มีค้นเว็บ) → 409 `ai_search_unavailable` / ในแชท AI จะบอกให้ใส่ key ของ Claude |
+| ค่าใช้จ่าย | จ่ายตามการใช้งาน | ฟรี มีโควตาต่อวัน (เกิน → 503 `ai_quota_exceeded`) — Google อาจเอาข้อความไปพัฒนาบริการ |
+
+- `Assistant` interface (`Chat`, `Research`) → handler ไม่ต้องรู้ว่าเป็น AI ตัวไหน
+- เครื่องมือเขียนครั้งเดียว (`toolSpec` ใน `ai/tools.go`) แล้วแปลงเป็นรูปแบบของแต่ละตัว: `claudeTools` / `geminiTools`
+- Gemini: เรียก `POST /models/{model}:generateContent` ด้วย Go standard library (ไม่เพิ่ม package), ส่งส่วนที่ AI ตอบกลับไปแบบเดิมทุกไบต์ (มี `thoughtSignature` ที่ Gemini ต้องได้คืน), คำตอบถูกบล็อก (SAFETY ฯลฯ) → 422 `ai_refused`
+
+**key ของร้าน** (`PUT` / `DELETE /ai/key`):
+
+- ต้องขึ้นต้นด้วย `sk-ant-` ไม่มีช่องว่าง (`validClaudeKey`) ไม่ใช่ → 400 `ai_key_format_invalid`
+- ลอง key กับ Anthropic ก่อน (`Claude.CheckKey` → `Models.List` ไม่เสียเงิน) ไม่ผ่าน → 400 `ai_key_invalid` ไม่บันทึก
+- เก็บแบบเข้ารหัส AES-256-GCM (`utils.Encrypt` / `Decrypt`, กุญแจ = SHA-256 ของ `JWT_SECRET`) — API ไม่ส่ง key กลับเลย ส่งแค่ 4 ตัวท้าย (`key_hint`) / `GET /company` ไม่มี `ai_key`
+- ถอดรหัสไม่ได้ (เช่น เปลี่ยน `JWT_SECRET`) → ลง log แล้วถือว่าไม่มี key (ร้านต้องใส่ใหม่) ไม่ทำให้ AI พัง
+
+**Claude**:
 
 - เปิด **fallback** ไว้: ถ้า Claude ปฏิเสธคำขอเพราะนโยบายความปลอดภัย จะให้รุ่นอื่นตอบแทนในคำขอเดียวกัน (`fallbacks: "default"`) / ยังปฏิเสธ = 422 `ai_refused`
-- `Claude` เป็น interface (`Send`) → test ใช้ตัวปลอม ไม่เรียก API จริง ไม่เสียเงิน
+- `Claude` (`Send`, `CheckKey`) และ `Gemini` (`Generate`) เป็น interface → test ใช้ตัวปลอม ไม่เรียก API จริง ไม่เสียเงิน
 - คำสั่งของ AI (`ai/prompt.go`) เป็นภาษาไทย ไม่เปลี่ยนตามคำขอ → ใส่ `cache_control` ไว้ ประหยัดค่า AI (วันที่วันนี้แยกเป็นอีกก้อน)
 
 **เช็คราคาตลาด** (`ai/market.go`): ส่งข้อมูลสินค้า + ใบต้นทุน + ช่องเพิ่มเติม + รูปแบบ VAT → Claude ค้นเว็บ (`web_search` ไม่เกิน 8 ครั้ง ตั้งที่อยู่เป็นไทย) → ส่งผลผ่านเครื่องมือ `save_market_report` (schema แบบ strict ได้ข้อมูลตรงรูปแบบเสมอ)
@@ -356,7 +382,7 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 
 | ตาราง | เก็บอะไร | column หลัก |
 |---|---|---|
-| `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type, vat_registered, prices_include_vat, use_cost_page (`000007`) |
+| `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type, vat_registered, prices_include_vat, use_cost_page (`000007`), ai_key (key ของ Claude แบบเข้ารหัส ว่าง = ไม่มี `000009_ai_key`) |
 | `products` | สินค้า (migration `000003_create_products`) | id, code (ห้ามซ้ำถ้าไม่ว่าง), name, category, description, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0), track_stock, custom_fields (`JSONB`) |
 | `product_fields` | ช่องข้อมูลเพิ่มเติมที่ร้านตั้งเอง (`000007_flexible_shop`) | id, name, type (text / number / date / select), options (`TEXT[]`), show_in_list, sort_order |
 | `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), kind (fixed / percent), name, quantity, unit, unit_price, percent, amount |
@@ -619,8 +645,10 @@ productHandler.RegisterRoutes(api)
 | `PORT` | `8080` | port ที่ API เปิดรอ |
 | `ALLOWED_ORIGIN` | `*` | เว็บที่อนุญาตให้เรียก API — ตอนพัฒนาใช้ `*` ได้ ขึ้น server จริงต้องใส่โดเมนเว็บ |
 | `DATABASE_URL` | **ต้องมี** | ในเครื่อง: `postgres://manas@localhost:5432/costbook?sslmode=disable` |
-| `ANTHROPIC_API_KEY` | ไม่มี = ปิด AI | API key ของ Claude (สมัครที่ https://platform.claude.com) ใช้เช็คราคาตลาด + แชท — มีค่าใช้จ่ายตามการใช้งาน ห้าม commit |
-| `JWT_SECRET` | **ต้องมี** | ข้อความลับไว้เซ็น token สร้างด้วย `openssl rand -hex 32` — แต่ละเครื่อง / server ใช้คนละค่า ถ้าเปลี่ยน token เก่าใช้ไม่ได้ทั้งหมด (ทุกคนต้อง login ใหม่) |
+| `ANTHROPIC_API_KEY` | ไม่มี = ใช้ key ที่ร้านใส่ในหน้าตั้งค่า หรือ AI ฟรี | API key ของ Claude (สมัครที่ https://platform.claude.com) ใช้เช็คราคาตลาด + แชท — มีค่าใช้จ่ายตามการใช้งาน ห้าม commit |
+| `GEMINI_API_KEY` | ไม่มี = ไม่มี AI ฟรี | API key ของ Gemini **ฟรี** (สร้างที่ https://aistudio.google.com/apikey) = AI เริ่มต้นเมื่อร้านไม่มี key ของ Claude — แชทได้ ค้นเว็บไม่ได้ ห้าม commit |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | รุ่นของ Gemini (เปลี่ยนเมื่อ Google ออกรุ่นใหม่ / รุ่นเดิมเลิกให้ใช้ฟรี) |
+| `JWT_SECRET` | **ต้องมี** | ข้อความลับไว้เซ็น token สร้างด้วย `openssl rand -hex 32` — แต่ละเครื่อง / server ใช้คนละค่า ถ้าเปลี่ยน token เก่าใช้ไม่ได้ทั้งหมด (ทุกคนต้อง login ใหม่) และ key AI ที่ร้านใส่ไว้ถอดรหัสไม่ได้ (ต้องใส่ใหม่) |
 | `GIN_MODE` | `debug` | Gin อ่านค่านี้เอง ไม่ต้องเขียนใน config — ตอนพัฒนาไม่ต้องตั้ง (Gin จะพิมพ์ข้อความ debug ให้ดู) ขึ้น server จริงตั้งเป็น `release` |
 
 ตอนพัฒนาเก็บค่าไว้ในไฟล์ `.env` (copy จาก `.env.example`) แล้วรันด้วย `make run` — Makefile โหลด `.env` ให้

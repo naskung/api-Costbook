@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.4.0
+  version: 0.5.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -38,7 +38,7 @@ tags:
   - name: dashboard
     description: ตัวเลขสรุปหน้าแรก (ต้อง login)
   - name: ai
-    description: "AI (Claude) เช็คราคาตลาด + แชทผู้ช่วย — ต้องใส่ ANTHROPIC_API_KEY ในไฟล์ .env ไม่ใส่ = ปิด AI (ต้อง login)"
+    description: "AI เช็คราคาตลาด + แชทผู้ช่วย — ใช้ Claude เมื่อร้านใส่ key (หน้าตั้งค่า / .env) ไม่มี = Gemini ฟรี (แชทได้ ค้นเว็บไม่ได้) (ต้อง login)"
 
 paths:
   /health:
@@ -1103,6 +1103,57 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /ai/key:
+    put:
+      tags: [ai]
+      summary: ใส่ key ของ Claude (ของร้าน)
+      description: "ลองใช้ key กับ Claude ก่อน (ไม่เสียค่า AI) ใช้ได้จริงถึงเก็บแบบเข้ารหัส — API ไม่ส่ง key กลับมาอีก (ได้แค่ 4 ตัวท้ายใน key_hint)"
+      operationId: saveAIKey
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key]
+              properties:
+                api_key: { type: string, example: "sk-ant-api03-..." }
+      responses:
+        "200":
+          description: บันทึกแล้ว ได้สถานะ AI ใหม่
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIStatus"
+        "400":
+          description: "JSON พัง / รูปแบบ key ผิด (ai_key_format_invalid) / Claude บอกว่า key ใช้ไม่ได้ (ai_key_invalid)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: ai_key_invalid }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AIUnavailable"
+    delete:
+      tags: [ai]
+      summary: ลบ key ของร้าน (กลับไปใช้ AI ฟรี)
+      operationId: deleteAIKey
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ลบแล้ว ได้สถานะ AI ใหม่
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /ai/chat:
     post:
       tags: [ai]
@@ -1186,6 +1237,13 @@ paths:
       security:
         - bearerAuth: []
       responses:
+        "409":
+          description: "AI ที่ใช้อยู่ค้นเว็บไม่ได้ (Gemini ฟรี) ต้องใส่ key ของ Claude ก่อน (ai_search_unavailable)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: ai_search_unavailable }
         "201":
           description: ผลเช็คใหม่ (บันทึกแล้ว)
           content:
@@ -1431,7 +1489,7 @@ components:
             $ref: "#/components/schemas/Error"
           example: { error: ai_no_result }
     AIUnavailable:
-      description: "ยังไม่ได้ใส่ API key (ai_not_configured) / API key ผิด (ai_key_invalid) / Claude ไม่ว่าง ลองใหม่ทีหลัง (ai_busy)"
+      description: "ไม่มี AI ให้ใช้ (ai_not_configured) / API key ผิด (ai_key_invalid) / AI ไม่ว่าง ลองใหม่ทีหลัง (ai_busy) / โควตา AI ฟรีหมด (ai_quota_exceeded)"
       content:
         application/json:
           schema:
@@ -2383,9 +2441,16 @@ components:
 
     AIStatus:
       type: object
+      description: AI ที่ใช้อยู่ตอนนี้ (ลำดับ key ของร้าน → key Claude ใน .env → Gemini ฟรี) — ไม่มี key ตัวจริงในคำตอบ
       properties:
         enabled: { type: boolean, example: true }
+        provider: { type: string, enum: [claude, gemini, none] }
         model: { type: string, example: claude-opus-5-5 }
+        source: { type: string, enum: [settings, env, ""], description: "settings = ร้านใส่เอง, env = ไฟล์ .env" }
+        web_search: { type: boolean, description: "ค้นเว็บได้ไหม (เช็คราคาตลาดได้เฉพาะ true)" }
+        has_own_key: { type: boolean, description: ร้านใส่ key Claude เองไว้ไหม }
+        key_hint: { type: string, example: "…a1B2", description: 4 ตัวท้ายของ key ที่ร้านใส่ }
+        free_available: { type: boolean, description: มี AI ฟรี (Gemini) ให้ใช้ไหม }
 
     MarketCheck:
       type: object

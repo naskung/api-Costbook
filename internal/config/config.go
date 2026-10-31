@@ -6,13 +6,15 @@ import (
 )
 
 // Config ค่าที่ต่างกันแต่ละเครื่อง อ่านจาก environment variable (ตอนพัฒนาเก็บไว้ในไฟล์ .env)
-// AnthropicAPIKey ไม่ใส่ก็ได้ = ปิดระบบ AI (เช็คราคาตลาด / แชท) ส่วนอื่นใช้ได้ปกติ
+// AnthropicAPIKey / GeminiAPIKey ไม่ใส่ก็ได้ — ร้านใส่ key ของ Claude เองที่หน้าตั้งค่าได้, Gemini = AI ฟรีตอนร้านไม่มี key
 type Config struct {
 	Port            string
 	AllowedOrigin   string
 	DatabaseURL     string
 	JWTSecret       string
 	AnthropicAPIKey string
+	GeminiAPIKey    string
+	GeminiModel     string
 }
 
 // Load อ่านค่า config ทั้งหมด ถ้าขาดค่าที่จำเป็นจะคืน error
@@ -24,6 +26,8 @@ func Load() (Config, error) {
 		JWTSecret:     os.Getenv("JWT_SECRET"),
 		// ชื่อเดียวกับที่ SDK ของ Claude ใช้
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
+		GeminiAPIKey:    os.Getenv("GEMINI_API_KEY"),
+		GeminiModel:     os.Getenv("GEMINI_MODEL"),
 	}
 
 	if cfg.DatabaseURL == "" {

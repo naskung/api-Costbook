@@ -32,9 +32,14 @@ var testToday = time.Date(2026, 10, 31, 10, 0, 0, 0, time.UTC)
 
 // fakeClaude Claude ปลอม: ตอบตามที่เตรียมไว้ทีละอัน + จำคำขอทุกอันไว้ตรวจ
 type fakeClaude struct {
-	replies []string // คำตอบแบบ JSON ของ API จริง
-	err     error
-	sent    []anthropic.BetaMessageNewParams
+	replies  []string // คำตอบแบบ JSON ของ API จริง
+	err      error
+	checkErr error // error ตอนลอง key (CheckKey)
+	sent     []anthropic.BetaMessageNewParams
+}
+
+func (f *fakeClaude) CheckKey(ctx context.Context) error {
+	return f.checkErr
 }
 
 func (f *fakeClaude) Send(ctx context.Context, params anthropic.BetaMessageNewParams) (*anthropic.BetaMessage, error) {
@@ -58,11 +63,21 @@ func (f *fakeClaude) lastRequestJSON() string {
 	return string(data)
 }
 
-// fakeRepository ตาราง market_checks ปลอม
+// fakeRepository ตาราง market_checks + key ของ AI ปลอม
 type fakeRepository struct {
-	latest MarketCheck
-	found  bool
-	saved  *MarketReport
+	latest       MarketCheck
+	found        bool
+	saved        *MarketReport
+	encryptedKey string
+}
+
+func (f *fakeRepository) SavedClaudeKey(ctx context.Context) (string, error) {
+	return f.encryptedKey, nil
+}
+
+func (f *fakeRepository) SaveClaudeKey(ctx context.Context, encrypted string) error {
+	f.encryptedKey = encrypted
+	return nil
 }
 
 func (f *fakeRepository) LatestMarketCheck(ctx context.Context, productID string) (MarketCheck, error) {
@@ -105,11 +120,26 @@ func (fakeShop) Transactions(ctx context.Context, monthStart string) ([]transact
 	return []transaction.Transaction{}, nil
 }
 
+// envClaudeKey key ของ Claude ใน .env (ปลอม)
+const envClaudeKey = "sk-ant-env-key-0000ENV1"
+
+// newTestRouter router ที่ใช้ Claude ปลอม (claude = nil → ไม่มี AI ให้ใช้เลย)
 func newTestRouter(repo Repository, claude Claude) *gin.Engine {
+	cfg := Config{Secret: testSecret}
+	if claude != nil {
+		cfg.ClaudeKey = envClaudeKey
+	}
+	return newRouterWith(repo, cfg, claude, nil)
+}
+
+// newRouterWith router ที่กำหนด config + Claude / Gemini ปลอมเองได้
+func newRouterWith(repo Repository, cfg Config, claude Claude, gemini Gemini) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := NewHandler(repo, claude, fakeShop{})
+	h := NewHandler(repo, fakeShop{}, cfg)
 	h.now = func() time.Time { return testToday }
+	h.newClaude = func(apiKey string) Claude { return claude }
+	h.newGemini = func(apiKey, model string) Gemini { return gemini }
 	h.RegisterRoutes(r.Group("/api/v1"), middleware.Auth(testSecret))
 	return r
 }
@@ -140,12 +170,16 @@ const (
 
 func TestHandler_Status(t *testing.T) {
 	rec := sendRequest(newTestRouter(&fakeRepository{}, nilClaude), http.MethodGet, "/api/v1/ai/status", "")
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false`) {
-		t.Errorf("ไม่มี API key ต้องได้ enabled false ได้ %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"enabled":false,"provider":"none"`) {
+		t.Errorf("ไม่มี key เลย ต้องได้ enabled false ได้ %d %s", rec.Code, rec.Body.String())
 	}
 	rec = sendRequest(newTestRouter(&fakeRepository{}, &fakeClaude{}), http.MethodGet, "/api/v1/ai/status", "")
-	if !strings.Contains(rec.Body.String(), `"enabled":true`) || !strings.Contains(rec.Body.String(), model) {
-		t.Errorf("มี API key ต้องได้ enabled true + ชื่อรุ่น ได้ %s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, `"provider":"claude"`) || !strings.Contains(body, `"source":"env"`) || !strings.Contains(body, model) {
+		t.Errorf("มี key ใน .env ต้องได้ Claude จาก env + ชื่อรุ่น ได้ %s", body)
+	}
+	if strings.Contains(body, envClaudeKey) {
+		t.Error("ห้ามส่ง key ตัวจริงกลับไป")
 	}
 }
 

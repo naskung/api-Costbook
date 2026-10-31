@@ -69,12 +69,15 @@ func New(cfg config.Config, db *pgxpool.Pool) *gin.Engine {
 	dashboardHandler := dashboard.NewHandler(dashboardRepo)
 	dashboardHandler.RegisterRoutes(api, authRequired)
 
-	// AI อ่านข้อมูลร้านผ่าน repository ของ feature อื่น (ไม่มี API key = ปิด AI)
+	// AI อ่านข้อมูลร้านผ่าน repository ของ feature อื่น / เลือก Claude (มี key) หรือ Gemini ฟรีให้เอง
 	shop := ai.Shop{
 		CompanyRepo: companyRepo, FieldRepo: fieldRepo, ProductRepo: productRepo,
 		CostRepo: costRepo, DashboardRepo: dashboardRepo, TransactionRepo: transactionRepo,
 	}
-	aiHandler := ai.NewHandler(ai.NewPostgresRepository(db), ai.NewClaude(cfg.AnthropicAPIKey), shop)
+	aiConfig := ai.Config{
+		ClaudeKey: cfg.AnthropicAPIKey, GeminiKey: cfg.GeminiAPIKey, GeminiModel: cfg.GeminiModel, Secret: cfg.JWTSecret,
+	}
+	aiHandler := ai.NewHandler(ai.NewPostgresRepository(db), shop, aiConfig)
 	aiHandler.RegisterRoutes(api, authRequired)
 
 	return r

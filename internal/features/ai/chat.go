@@ -23,7 +23,7 @@ func chatParams(messages []anthropic.BetaMessageParam, today string) anthropic.B
 			{Text: "วันนี้คือวันที่ " + today},
 		},
 		Messages:     messages,
-		Tools:        chatTools,
+		Tools:        claudeTools(chatTools),
 		OutputConfig: anthropic.BetaOutputConfigParam{Effort: anthropic.BetaOutputConfigEffortMedium},
 	}
 }

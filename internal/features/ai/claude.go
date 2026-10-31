@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 	"github.com/anthropics/anthropic-sdk-go/v2/option"
@@ -27,6 +28,7 @@ var (
 // แยกเป็น interface เพื่อให้ test ใช้ตัวปลอมได้ (ไม่ต้องเรียก API จริง ไม่เสียเงิน)
 type Claude interface {
 	Send(ctx context.Context, params anthropic.BetaMessageNewParams) (*anthropic.BetaMessage, error)
+	CheckKey(ctx context.Context) error
 }
 
 type claudeClient struct {
@@ -49,10 +51,21 @@ func (c *claudeClient) Send(ctx context.Context, params anthropic.BetaMessageNew
 	return c.client.Beta.Messages.New(ctx, params)
 }
 
+// CheckKey ลองใช้ key ดู (ขอรายชื่อรุ่น 1 ตัว ไม่เสียค่า AI) key ผิดได้ *anthropic.Error 401
+func (c *claudeClient) CheckKey(ctx context.Context) error {
+	_, err := c.client.Models.List(ctx, anthropic.ModelListParams{Limit: anthropic.Int(1)})
+	return err
+}
+
 // writeAIError แปลง error ของงาน AI เป็น error code ที่ Flutter แปลเป็นข้อความได้
 func writeAIError(c *gin.Context, err error) {
 	var apiErr *anthropic.Error
+	var geminiErr *GeminiError
 	switch {
+	case errors.Is(err, ErrNoWebSearch):
+		helpers.WriteError(c, http.StatusConflict, "ai_search_unavailable")
+	case errors.As(err, &geminiErr):
+		writeGeminiError(c, geminiErr)
 	case errors.Is(err, ErrRefused):
 		helpers.WriteError(c, http.StatusUnprocessableEntity, "ai_refused")
 	case errors.Is(err, ErrNoReport), errors.Is(err, ErrTooManySteps):
@@ -64,6 +77,24 @@ func writeAIError(c *gin.Context, err error) {
 		writeClaudeAPIError(c, apiErr)
 	default:
 		helpers.ServerError(c, err)
+	}
+}
+
+// writeGeminiError error ที่ API ของ Gemini ตอบกลับมา
+// key ผิด (400 ที่บอกว่า API key / 401 / 403) = ai_key_invalid, 429 = โควตาฟรีหมด, 5xx = ไม่ว่าง
+func writeGeminiError(c *gin.Context, err *GeminiError) {
+	isKeyError := err.Status == http.StatusUnauthorized || err.Status == http.StatusForbidden ||
+		(err.Status == http.StatusBadRequest && strings.Contains(err.Message, "API key"))
+	switch {
+	case isKeyError:
+		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_key_invalid")
+	case err.Status == http.StatusTooManyRequests:
+		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_quota_exceeded")
+	case err.Status >= 500:
+		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_busy")
+	default:
+		slog.Error("เรียก Gemini ไม่สำเร็จ", "status", err.Status, "error", err.Message)
+		helpers.WriteError(c, http.StatusBadGateway, "ai_error")
 	}
 }
 

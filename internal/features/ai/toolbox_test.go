@@ -13,7 +13,7 @@ import (
 )
 
 func testToolbox() toolbox {
-	return toolbox{shop: fakeShop{}, repo: &fakeRepository{}, today: testToday}
+	return toolbox{shop: fakeShop{}, repo: &fakeRepository{}, today: testToday, canSearch: true}
 }
 
 // runTool เรียกเครื่องมือด้วย input แบบ JSON
@@ -121,4 +121,14 @@ func TestToolbox_MarketCheck_NotChecked(t *testing.T) {
 func TestToolbox_UnknownTool(t *testing.T) {
 	_, _, err := runTool(t, "delete_everything", `{}`)
 	wantToolError(t, err, "ไม่มีเครื่องมือ")
+}
+
+func TestToolbox_MarketCheck_NeedsWebSearch(t *testing.T) {
+	_, action, err := runTool(t, "propose_market_check", `{"product_id":"`+caseID+`","reason":"x"}`)
+	if err != nil || action.Type != actionMarketCheck {
+		t.Errorf("AI ที่ค้นเว็บได้ เสนอเช็คราคาตลาดได้ ได้ %+v %v", action, err)
+	}
+	free := toolbox{shop: fakeShop{}, repo: &fakeRepository{}, today: testToday}
+	_, _, err = free.run(context.Background(), "propose_market_check", []byte(`{"product_id":"`+caseID+`","reason":"x"}`))
+	wantToolError(t, err, "AI ฟรีค้นเว็บไม่ได้")
 }

@@ -23,10 +23,12 @@ type toolError string
 func (e toolError) Error() string { return string(e) }
 
 // toolbox ทำงานตามเครื่องมือที่ AI เรียกในแชท
+// canSearch = AI ที่ใช้อยู่ค้นเว็บได้ไหม (ไม่ได้ → เสนอเช็คราคาตลาดไม่ได้)
 type toolbox struct {
-	shop  ShopReader
-	repo  Repository
-	today time.Time
+	shop      ShopReader
+	repo      Repository
+	today     time.Time
+	canSearch bool
 }
 
 // run ทำงานของเครื่องมือ 1 ครั้ง → ข้อความผลลัพธ์ (JSON) + งานที่เสนอ (ถ้ามี)
@@ -300,6 +302,9 @@ func (t toolbox) proposeMarketCheck(ctx context.Context, input []byte) (string, 
 	}
 	if err := readInput(input, &in); err != nil {
 		return "", nil, err
+	}
+	if !t.canSearch {
+		return "", nil, toolError("AI ฟรีค้นเว็บไม่ได้ เช็คราคาตลาดต้องใส่ key ของ Claude ที่หน้าตั้งค่าก่อน")
 	}
 	p, err := t.findProduct(ctx, in.ProductID)
 	if err != nil {

@@ -12,10 +12,13 @@ import (
 // ErrNotFound ใช้บอก handler ว่าสินค้านี้ยังไม่เคยเช็คราคาตลาด (handler จะตอบ 404)
 var ErrNotFound = errors.New("market check not found")
 
-// Repository คือรายการคำสั่งที่คุยกับ DB (ตาราง market_checks)
+// Repository คือรายการคำสั่งที่คุยกับ DB (ตาราง market_checks + key ของ AI ในตาราง company)
+// key ที่เก็บ / อ่านเป็นแบบเข้ารหัสแล้วเสมอ (ว่าง = ไม่มี)
 type Repository interface {
 	LatestMarketCheck(ctx context.Context, productID string) (MarketCheck, error)
 	SaveMarketCheck(ctx context.Context, p product.Product, report MarketReport) (MarketCheck, error)
+	SavedClaudeKey(ctx context.Context) (string, error)
+	SaveClaudeKey(ctx context.Context, encrypted string) error
 }
 
 type PostgresRepository struct {
@@ -58,6 +61,19 @@ func (r *PostgresRepository) SaveMarketCheck(ctx context.Context, p product.Prod
 		report.RetailLow, report.RetailHigh, report.RetailTypical, report.WholesaleLow, report.WholesaleHigh, report.WholesaleNote,
 		report.MarketCost, report.SuggestedPrice, report.Confidence, report.Summary, report.Advice, report.CostItems, report.Sources)
 	return scanMarketCheck(row)
+}
+
+// SavedClaudeKey key ของ Claude ที่ร้านใส่ไว้ (เข้ารหัสอยู่)
+func (r *PostgresRepository) SavedClaudeKey(ctx context.Context) (string, error) {
+	var encrypted string
+	err := r.db.QueryRow(ctx, `SELECT ai_key FROM company WHERE id = 1`).Scan(&encrypted)
+	return encrypted, err
+}
+
+// SaveClaudeKey บันทึก key ที่เข้ารหัสแล้ว (ส่ง "" = ลบ key กลับไปใช้ AI ฟรี)
+func (r *PostgresRepository) SaveClaudeKey(ctx context.Context, encrypted string) error {
+	_, err := r.db.Exec(ctx, `UPDATE company SET ai_key = $1, updated_at = now() WHERE id = 1`, encrypted)
+	return err
 }
 
 // scanMarketCheck อ่าน 1 แถวของ market_checks (ลำดับตาม marketColumns)

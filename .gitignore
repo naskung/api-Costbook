@@ -1,0 +1,10 @@
+# ค่าลับของแต่ละเครื่อง (รหัส DB, secret) ห้าม commit
+.env
+
+# ไฟล์ที่ build ออกมา
+/bin/
+
+# ผล coverage
+coverage.out
+
+.DS_Store

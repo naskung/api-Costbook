@@ -30,7 +30,7 @@ Flutter Web ──HTTP request──▶ Go API ──SQL──▶ PostgreSQL
 | Handler | ฟังก์ชันที่รับ request แล้วตอบกลับ (1 endpoint = 1 ฟังก์ชัน) | `features/*/handler.go` | 3 |
 | Validation | เช็คข้อมูลที่ส่งมาก่อนบันทึก เช่น ชื่อห้ามว่าง ราคาห้ามติดลบ | `Validate()` ใน model | 3 |
 | DB Transaction | หลายคำสั่ง SQL ต้องสำเร็จพร้อมกัน หรือยกเลิกทั้งหมด (เช่น ออกใบกำกับ + ตัด stock) | `pgx` Begin / Commit | 3 |
-| Auth | login และเช็คว่าใครเรียก API | JWT + bcrypt | 4 |
+| Auth | login และเช็คว่าใครเรียก API | JWT (`golang-jwt`) + bcrypt — token อายุ 7 วัน ส่งมาใน header `Authorization: Bearer <token>` | 4 (เสร็จแล้ว) |
 | Logging | พิมพ์ว่ามี request อะไรเข้ามา ไว้หาจุดผิด | log ของ request: มากับ `gin.Default()` / log ของ error: `log/slog` (มากับ Go) | 1 |
 | Deploy | เอา API ขึ้น server จริง + HTTPS + สำรองข้อมูล | ยังไม่เลือก | 5 |
 
@@ -41,7 +41,7 @@ Flutter Web ──HTTP request──▶ Go API ──SQL──▶ PostgreSQL
 | เครื่องมือ | สถานะ | วิธีติดตั้ง |
 |---|---|---|
 | Go | มีแล้ว (1.26) | — |
-| PostgreSQL | ยังไม่มี (Phase 2) | `brew install postgresql@17` แล้ว `brew services start postgresql@17` |
+| PostgreSQL | มีแล้ว (17.11) | `brew install postgresql@17` → เพิ่ม `export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"` ใน `~/.zshrc` → `brew services start postgresql@17` → `createdb costbook` |
 | golang-migrate | ยังไม่มี (Phase 2) | `brew install golang-migrate` |
 | ตัวยิง API ทดสอบ | มี `curl` แล้ว | หรือใช้ Postman / Bruno ถ้าอยากได้หน้าจอ |
 | ตัวดูข้อมูลใน DB | มีแล้ว (DBeaver) | — |
@@ -79,8 +79,9 @@ api-Costbook/
 │   ├── router/               สร้าง Gin router + รวม route ทั้งหมดไว้ที่เดียว
 │   ├── middleware/           ทำงานก่อนทุก request: cors, auth (logger มากับ gin.Default() แล้ว)
 │   ├── helpers/              ช่วยตอบ error: WriteError, ServerError (ตอบสำเร็จใช้ c.JSON ของ Gin)
-│   ├── utils/                ฟังก์ชันคำนวณล้วน ๆ: money, tax, cost
+│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money, tax, cost, token (สร้าง / ตรวจ JWT)
 │   └── features/
+│       ├── auth/             login + ข้อมูลผู้ใช้ที่ login อยู่ (ตาราง users)
 │       ├── company/
 │       ├── product/
 │       │   ├── model.go           struct + Validate()
@@ -96,8 +97,14 @@ api-Costbook/
 │       └── dashboard/
 ├── migrations/               ไฟล์ SQL สร้าง / แก้ตาราง เช่น 000001_create_users.up.sql / .down.sql
 ├── sql/                      คำสั่ง SQL ไว้ copy ไปรันเองใน DBeaver (select / insert / update / delete) 1 ไฟล์ต่อ 1 ตาราง — API ไม่ได้ใช้
-├── docs/ARCHITECTURE.md      ไฟล์นี้
+├── docs/
+│   ├── ARCHITECTURE.md       ไฟล์นี้
+│   ├── openapi.yaml          เอกสาร API (Swagger) — เพิ่ม / แก้ endpoint ต้องแก้ไฟล์นี้ด้วย
+│   ├── swagger.html          หน้าเว็บ Swagger UI (โหลดจาก CDN)
+│   └── docs.go               ฝัง 2 ไฟล์ข้างบนเข้าโปรแกรม (go:embed) แล้วเปิดที่ GET /docs
 ├── PROGRESS.md               ทำถึงไหนแล้ว
+├── Makefile                  คำสั่งลัด: make run / make test / make check (โหลดค่าจาก .env ให้)
+├── .env.example              ตัวอย่างค่า config → copy เป็น .env (ห้าม commit .env)
 └── go.mod
 ```
 
@@ -156,8 +163,8 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 | status error | เมื่อไหร่ | ตัวอย่าง code |
 |---|---|---|
-| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `product_name_required` |
-| 401 | ยังไม่ login | `unauthorized` |
+| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `product_name_required`, `email_required`, `password_required` |
+| 401 | ยังไม่ login / token ผิดหรือหมดอายุ / login ไม่ผ่าน | `unauthorized`, `invalid_credentials` |
 | 404 | ไม่เจอข้อมูล / ไม่มี path นี้ | `product_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
 | 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `product_in_use` |
 | 500 | server พัง | `server_error` (ใช้ `helpers.ServerError` → error จริงลง log ไม่ส่งให้ client) |
@@ -166,8 +173,13 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 ## 7. Endpoints
 
+**เอกสาร Swagger:** `make run` แล้วเปิด http://localhost:8080/docs — ดูทุก endpoint และกด **Try it out** ลองเรียกได้
+เพิ่ม / แก้ endpoint → แก้ `docs/openapi.yaml` ด้วยทุกครั้ง (`TestRouter_AllRoutesInOpenAPI` เช็คว่าทุก route ใน `/api/v1` มีในไฟล์นี้ ถ้าลืม test ไม่ผ่าน)
+ในไฟล์ YAML ถ้าข้อความมี `: ` (โคลอน + เว้นวรรค) ต้องครอบด้วย `"..."` ไม่งั้นหน้า Swagger โหลดไม่ขึ้น
+
 | Feature | Method + Path | ทำอะไร |
 |---|---|---|
+| docs | `GET /docs` | หน้าเอกสาร Swagger (ไม่อยู่ใต้ `/api/v1`) |
 | health | `GET /api/v1/health` | เช็คว่า API ทำงาน |
 | company | `GET /api/v1/company` | ข้อมูลบริษัท (ผู้ขาย) |
 | | `PUT /api/v1/company` | แก้ข้อมูลบริษัท |
@@ -193,10 +205,35 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `POST /api/v1/invoices` | ออกใบกำกับ |
 | | `POST /api/v1/invoices/{id}/cancel` | ยกเลิกใบกำกับ |
 | dashboard | `GET /api/v1/dashboard?month=2026-10` | ตัวเลขสรุปหน้าแรก |
-| auth (Phase 4) | `POST /api/v1/auth/login` | login ได้ token |
-| | `GET /api/v1/auth/me` | ข้อมูลผู้ใช้ที่ login อยู่ |
+| auth ✅ | `POST /api/v1/auth/login` | login ได้ token |
+| | `GET /api/v1/auth/me` | ข้อมูลผู้ใช้ที่ login อยู่ (ต้องส่ง token) |
 
 ในตารางเขียน path แบบ `{id}` แต่ในโค้ด Gin เขียนเป็น `:id` เช่น `api.GET("/products/:id", ...)` แล้วอ่านค่าด้วย `c.Param("id")`
+
+### รายละเอียด auth (ทำแล้ว)
+
+`POST /api/v1/auth/login`
+
+```json
+// request
+{ "email": "admin@costbook.com", "password": "1234" }
+
+// 200
+{
+  "token": "eyJhbGciOi...",
+  "user": { "id": "a00d265d-...", "email": "admin@costbook.com", "first_name": "Admin", "last_name": "CostBook" }
+}
+```
+
+- อีเมลไม่สนตัวพิมพ์เล็ก / ใหญ่ และตัดช่องว่างหน้า-หลังให้ (เก็บใน DB เป็นตัวเล็กเสมอ)
+- error: 400 `invalid_json` / `email_required` / `password_required`, 401 `invalid_credentials` (อีเมลไม่มี หรือรหัสผิด ตอบเหมือนกัน)
+
+`GET /api/v1/auth/me` — header `Authorization: Bearer <token>`
+
+- 200 `{ "id", "email", "first_name", "last_name" }`
+- 401 `unauthorized` (ไม่มี token / token ผิด / หมดอายุ / ผู้ใช้ถูกลบ) → Flutter พาไปหน้า login
+
+route ใหม่ที่ต้อง login ก่อน → ใส่ `authRequired` (`middleware.Auth`) ใน `router.go` แล้ว handler อ่าน id ผู้ใช้ด้วย `c.GetString(middleware.UserIDKey)`
 
 ---
 
@@ -461,10 +498,12 @@ productHandler.RegisterRoutes(api)
 |---|---|---|
 | `PORT` | `8080` | port ที่ API เปิดรอ |
 | `ALLOWED_ORIGIN` | `*` | เว็บที่อนุญาตให้เรียก API — ตอนพัฒนาใช้ `*` ได้ ขึ้น server จริงต้องใส่โดเมนเว็บ |
-| `DATABASE_URL` | (Phase 2) | เช่น `postgres://postgres:postgres@localhost:5432/costbook?sslmode=disable` |
+| `DATABASE_URL` | **ต้องมี** | ในเครื่อง: `postgres://manas@localhost:5432/costbook?sslmode=disable` |
+| `JWT_SECRET` | **ต้องมี** | ข้อความลับไว้เซ็น token สร้างด้วย `openssl rand -hex 32` — แต่ละเครื่อง / server ใช้คนละค่า ถ้าเปลี่ยน token เก่าใช้ไม่ได้ทั้งหมด (ทุกคนต้อง login ใหม่) |
 | `GIN_MODE` | `debug` | Gin อ่านค่านี้เอง ไม่ต้องเขียนใน config — ตอนพัฒนาไม่ต้องตั้ง (Gin จะพิมพ์ข้อความ debug ให้ดู) ขึ้น server จริงตั้งเป็น `release` |
 
-ตัวอย่าง: `PORT=9000 go run ./cmd/api`
+ตอนพัฒนาเก็บค่าไว้ในไฟล์ `.env` (copy จาก `.env.example`) แล้วรันด้วย `make run` — Makefile โหลด `.env` ให้
+เปลี่ยนค่าชั่วคราว: `make run PORT=9000`
 รหัสผ่าน / secret ห้ามเขียนในโค้ด และห้าม commit ไฟล์ `.env` (อยู่ใน `.gitignore` แล้ว)
 
 ---
@@ -472,8 +511,13 @@ productHandler.RegisterRoutes(api)
 ## 14. คำสั่งที่ใช้บ่อย
 
 ```bash
-go run ./cmd/api                          # เปิด API ที่ http://localhost:8080
+make run                                  # เปิด API ที่ http://localhost:8080 (โหลด .env ให้) กด Ctrl+C เพื่อปิด
+make test                                 # รัน unit test ทั้งหมด
+make check                                # gofmt + go vet + go test -cover
+open http://localhost:8080/docs           # เปิดหน้าเอกสาร Swagger ใน browser
 curl localhost:8080/api/v1/health         # ลองเรียก → {"status":"ok"}
+curl -X POST localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"admin@costbook.com","password":"1234"}'   # ลอง login → ได้ token
 gofmt -l .                                # รายชื่อไฟล์ที่ยังไม่ได้จัดรูปแบบ (ว่าง = ดี)
 gofmt -w .                                # จัดรูปแบบให้อัตโนมัติ
 go vet ./...                              # ตรวจโค้ดที่น่าจะผิด
@@ -489,5 +533,6 @@ go build -o bin/api ./cmd/api             # build เป็นไฟล์โป
 - ฝั่ง Flutter ตั้ง `ApiConstants.baseUrl = 'http://localhost:8080/api/v1'`
 - ชื่อ field ใน JSON ต้องตรงกับ `fromJson` / `toJson` ของ model ฝั่ง Flutter
 - error code จาก API → Flutter แสดงด้วย `'error.<code>'.tr` (เพิ่ม key `error.xxx` ใน `th.json` / `en.json`)
+- login: เก็บ `token` ที่ได้ แล้วแนบ header `Authorization: Bearer <token>` ทุก request ที่ต้อง login — ได้ 401 `unauthorized` เมื่อไหร่ ให้ลบ token แล้วพาไปหน้า login
 - PDF ใบกำกับ สร้างฝั่ง Flutter จากข้อมูล `GET /api/v1/invoices/{id}`
 - แก้ API ที่กระทบ Flutter (เปลี่ยนชื่อ field / path) → แก้ทั้ง 2 repo และบันทึกใน `PROGRESS.md` ของทั้ง 2 ฝั่ง

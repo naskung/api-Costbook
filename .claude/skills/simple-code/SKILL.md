@@ -45,7 +45,7 @@ description: กฎเขียนโค้ด Go แบบเรียบง่
 - ห้ามใช้ generics ถ้ายังใช้ไม่ถึง 3 ที่
 - ห้ามใช้ goroutine / channel เอง (Gin แยก request ให้อยู่แล้ว)
 - ห้ามใช้ `panic` และ `init()` — คืน error แทน
-- ห้ามใช้ตัวแปร global ที่เปลี่ยนค่าได้ (ใช้ได้แค่ `const` และ `var ErrXxx = errors.New(...)`)
+- ห้ามใช้ตัวแปร global ที่เปลี่ยนค่าได้ (ใช้ได้แค่ `const`, `var ErrXxx = errors.New(...)` และ `var` ที่มี `//go:embed` ซึ่งไม่แก้ค่า)
 - ห้ามต่อ string เป็น SQL (`"... WHERE id = '" + id + "'"`) → โดน SQL injection
 - ห้ามส่ง error จริงของ server ให้ client → ใช้ `helpers.ServerError`
 - ห้ามเขียนรหัสผ่าน / secret ลงในโค้ด → อ่านจาก environment variable

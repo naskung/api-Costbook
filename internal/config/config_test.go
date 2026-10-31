@@ -1,0 +1,68 @@
+package config
+
+import "testing"
+
+func TestLoad_Defaults(t *testing.T) {
+	t.Setenv("PORT", "")
+	t.Setenv("ALLOWED_ORIGIN", "")
+	t.Setenv("DATABASE_URL", "postgres://localhost/costbook")
+	t.Setenv("JWT_SECRET", "secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, ต้องไม่มี error", err)
+	}
+	if cfg.Port != "8080" {
+		t.Errorf("Port = %q, ต้องได้ %q", cfg.Port, "8080")
+	}
+	if cfg.AllowedOrigin != "*" {
+		t.Errorf("AllowedOrigin = %q, ต้องได้ %q", cfg.AllowedOrigin, "*")
+	}
+	if cfg.DatabaseURL != "postgres://localhost/costbook" {
+		t.Errorf("DatabaseURL = %q, ต้องได้ %q", cfg.DatabaseURL, "postgres://localhost/costbook")
+	}
+	if cfg.JWTSecret != "secret" {
+		t.Errorf("JWTSecret = %q, ต้องได้ %q", cfg.JWTSecret, "secret")
+	}
+}
+
+func TestLoad_CustomValues(t *testing.T) {
+	t.Setenv("PORT", "9000")
+	t.Setenv("ALLOWED_ORIGIN", "https://costbook.example.com")
+	t.Setenv("DATABASE_URL", "postgres://localhost/costbook")
+	t.Setenv("JWT_SECRET", "secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, ต้องไม่มี error", err)
+	}
+	if cfg.Port != "9000" {
+		t.Errorf("Port = %q, ต้องได้ %q", cfg.Port, "9000")
+	}
+	if cfg.AllowedOrigin != "https://costbook.example.com" {
+		t.Errorf("AllowedOrigin = %q, ต้องได้ %q", cfg.AllowedOrigin, "https://costbook.example.com")
+	}
+}
+
+func TestLoad_MissingRequired(t *testing.T) {
+	tests := []struct {
+		name        string
+		databaseURL string
+		jwtSecret   string
+	}{
+		{"ไม่มี DATABASE_URL ได้ error", "", "secret"},
+		{"ไม่มี JWT_SECRET ได้ error", "postgres://localhost/costbook", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", tt.databaseURL)
+			t.Setenv("JWT_SECRET", tt.jwtSecret)
+
+			_, err := Load()
+			if err == nil {
+				t.Error("Load() error = nil, ต้องได้ error")
+			}
+		})
+	}
+}

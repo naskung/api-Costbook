@@ -17,13 +17,14 @@ Backend ของ CostBook: คำนวณต้นทุนสินค้า,
 - โครงสร้าง: `handler → repository → PostgreSQL`, คำนวณอยู่ใน `utils` / `logic.go`, ไม่มีชั้น service
 - web framework ใช้ **Gin** ส่วนอื่นใช้ Go standard library ก่อนเสมอ จะเพิ่ม package ใหม่ → ถามผู้ใช้ก่อน
 - JSON `snake_case` ตรงกับ model ฝั่ง Flutter, error ตอบเป็น `{"error": "code"}`
+- เพิ่ม / แก้ endpoint → แก้ `docs/openapi.yaml` ด้วย (ดูได้ที่ `http://localhost:8080/docs`)
 - แก้ API ที่กระทบ Flutter → แจ้งผู้ใช้ และบันทึกใน `PROGRESS.md` ของทั้ง 2 repo
 - ตอบผู้ใช้เป็นภาษาไทย
 
 ## คำสั่ง
 
 ```bash
-go run ./cmd/api
+make run          # เปิด API (โหลดค่าจาก .env ให้) — go run ./cmd/api ตรง ๆ จะ error เพราะไม่มี DATABASE_URL / JWT_SECRET
 gofmt -l .
 go vet ./...
 go test ./...

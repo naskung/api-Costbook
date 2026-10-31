@@ -82,7 +82,7 @@ api-Costbook/
 │   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money, tax, cost, token (สร้าง / ตรวจ JWT)
 │   └── features/
 │       ├── auth/             login + ข้อมูลผู้ใช้ที่ login อยู่ (ตาราง users)
-│       ├── company/
+│       ├── company/          ข้อมูลร้าน + โลโก้ (ตาราง company มีแถวเดียว)
 │       ├── product/
 │       │   ├── model.go           struct + Validate()
 │       │   ├── model_test.go
@@ -163,9 +163,9 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 | status error | เมื่อไหร่ | ตัวอย่าง code |
 |---|---|---|
-| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `product_name_required`, `email_required`, `password_required` |
+| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `product_name_required`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid` |
 | 401 | ยังไม่ login / token ผิดหรือหมดอายุ / login ไม่ผ่าน | `unauthorized`, `invalid_credentials` |
-| 404 | ไม่เจอข้อมูล / ไม่มี path นี้ | `product_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
+| 404 | ไม่เจอข้อมูล / ไม่มี path นี้ | `product_not_found`, `logo_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
 | 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `product_in_use` |
 | 500 | server พัง | `server_error` (ใช้ `helpers.ServerError` → error จริงลง log ไม่ส่งให้ client) |
 
@@ -181,8 +181,11 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 |---|---|---|
 | docs | `GET /docs` | หน้าเอกสาร Swagger (ไม่อยู่ใต้ `/api/v1`) |
 | health | `GET /api/v1/health` | เช็คว่า API ทำงาน |
-| company | `GET /api/v1/company` | ข้อมูลบริษัท (ผู้ขาย) |
-| | `PUT /api/v1/company` | แก้ข้อมูลบริษัท |
+| company ✅ | `GET /api/v1/company` | ข้อมูลร้าน (ผู้ขาย) — ไม่ต้อง login |
+| | `PUT /api/v1/company` | แก้ข้อมูลร้าน |
+| | `GET /api/v1/company/logo` | โลโก้ร้าน (ตอบเป็นรูป) — ไม่ต้อง login |
+| | `PUT /api/v1/company/logo` | อัปโหลดโลโก้ (multipart ช่อง `logo`, PNG / JPG / WebP ไม่เกิน 1 MB) |
+| | `DELETE /api/v1/company/logo` | ลบโลโก้ |
 | product | `GET /api/v1/products` | รายการสินค้า |
 | | `GET /api/v1/products/{id}` | สินค้า 1 ตัว |
 | | `POST /api/v1/products` | เพิ่มสินค้า |
@@ -235,13 +238,24 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 route ใหม่ที่ต้อง login ก่อน → ใส่ `authRequired` (`middleware.Auth`) ใน `router.go` แล้ว handler อ่าน id ผู้ใช้ด้วย `c.GetString(middleware.UserIDKey)`
 
+### รายละเอียด company (ทำแล้ว)
+
+**1 ระบบ = 1 ร้าน** — ร้านใหม่ติดตั้งระบบแยก (แบบ local) แล้วแก้ชื่อ / ที่อยู่ / โลโก้ผ่าน API หน้าเว็บ Flutter ใช้ตัวเดียวกันทุกร้าน ไม่ต้องแก้
+
+- `GET /api/v1/company` → `{ "name", "address", "tax_id", "branch", "phone", "has_logo" }` (ยังไม่ตั้งค่า = ค่าว่างทุกช่อง)
+- `PUT /api/v1/company` ส่งครบทุกช่อง (ยกเว้น `has_logo`) — `name` ห้ามว่าง, `tax_id` ว่างได้หรือเป็นตัวเลข 13 หลัก
+- `GET /api/v1/company/logo` ตอบเป็นรูปตรง ๆ → `Image.network(...)` ได้เลย / 404 `logo_not_found` → แสดงโลโก้ CostBook แทน
+- `PUT /api/v1/company/logo` → ได้ข้อมูลร้าน (`has_logo: true`) — เช็คชนิดไฟล์จากข้างในไฟล์ (`http.DetectContentType`) ไม่เชื่อนามสกุล, ไม่รับ SVG / GIF
+- ดูข้อมูลร้าน / โลโก้ไม่ต้อง login เพื่อให้หน้า login แสดงชื่อ + โลโก้ร้านได้
+- โลโก้ตอบ header `Cache-Control: no-cache` — Flutter ที่เพิ่งอัปโหลดโลโก้ใหม่ต้องโหลดรูปใหม่เอง (ล้าง cache ของ `Image.network`)
+
 ---
 
 ## 8. ตารางในฐานข้อมูล
 
 | ตาราง | เก็บอะไร | column หลัก |
 |---|---|---|
-| `company` | ข้อมูลบริษัท (มีแถวเดียว) | name, address, tax_id, branch, phone |
+| `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type |
 | `products` | สินค้า | id, name, unit, cost_price, sell_price, stock, min_stock, batch_quantity |
 | `product_costs` | รายการต้นทุนของสินค้า | id, product_id, type (material / labor / overhead), name, amount |
 | `stock_movements` | ประวัติรับเข้า / เบิกออก | id, product_id, type (in / out), quantity, note, invoice_id, created_at |
@@ -461,7 +475,7 @@ productHandler.RegisterRoutes(api)
 | เลขที่ใบกำกับ | ค่าเริ่มต้น `INV-2026-0001` รันใหม่ทุกปี ใช้ `UPDATE invoice_numbers SET last_number = last_number + 1 WHERE year = $1 RETURNING last_number` ใน transaction → เลขไม่ซ้ำแม้กดพร้อมกัน |
 | แก้ / ลบใบกำกับ | **ห้าม** ถ้าผิดให้ยกเลิก (`status = cancelled`) แล้วออกใบใหม่ |
 | ยกเลิกใบกำกับ | คืน stock + ลบรายรับที่ผูกกับใบนั้น (ทำใน transaction เดียว) |
-| ข้อมูลในใบ | เก็บชื่อ ที่อยู่ เลขผู้เสียภาษี ของผู้ขาย / ผู้ซื้อ และชื่อสินค้า **ณ วันที่ออก** ไว้ในใบเลย แก้ข้อมูลบริษัทหรือสินค้าภายหลัง ใบเก่าต้องไม่เปลี่ยน |
+| ข้อมูลในใบ | เก็บชื่อ ที่อยู่ เลขผู้เสียภาษี ของผู้ขาย / ผู้ซื้อ และชื่อสินค้า **ณ วันที่ออก** ไว้ในใบเลย แก้ข้อมูลบริษัทหรือสินค้าภายหลัง ใบเก่าต้องไม่เปลี่ยน — **ยกเว้นโลโก้** ไม่เก็บซ้ำในใบ (กฎหมายไม่บังคับ + DB จะบวม) พิมพ์ใบเก่าซ้ำจะได้โลโก้ปัจจุบัน |
 | รายรับจากใบกำกับ | แก้ / ลบตรง ๆ ไม่ได้ ต้องยกเลิกใบกำกับ |
 | ลบสินค้า | ถ้าเคยอยู่ในใบกำกับแล้ว ลบไม่ได้ → 409 `product_in_use` |
 

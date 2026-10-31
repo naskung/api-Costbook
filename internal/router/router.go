@@ -8,6 +8,7 @@ import (
 	"github.com/naskung/api-Costbook/docs"
 	"github.com/naskung/api-Costbook/internal/config"
 	"github.com/naskung/api-Costbook/internal/features/auth"
+	"github.com/naskung/api-Costbook/internal/features/company"
 	"github.com/naskung/api-Costbook/internal/helpers"
 	"github.com/naskung/api-Costbook/internal/middleware"
 )
@@ -29,6 +30,9 @@ func New(cfg config.Config, db *pgxpool.Pool) *gin.Engine {
 
 	authHandler := auth.NewHandler(auth.NewPostgresRepository(db), cfg.JWTSecret)
 	authHandler.RegisterRoutes(api, authRequired)
+
+	companyHandler := company.NewHandler(company.NewPostgresRepository(db))
+	companyHandler.RegisterRoutes(api, authRequired)
 
 	return r
 }

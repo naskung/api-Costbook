@@ -7,7 +7,8 @@
 
 - **เสร็จแล้ว:** Phase 0, พื้นฐาน API (server, config, router, CORS, helpers), ต่อ DB, login (`POST /auth/login`, `GET /auth/me`)
 - **รันได้แล้ว:** `make run` → `http://localhost:8080/api/v1/health`, เอกสาร Swagger: `http://localhost:8080/docs`
-- **ยังไม่ได้ทำ:** `utils` คำนวณเงิน / ภาษี, `golang-migrate`, feature อื่น ๆ ทั้งหมด — รอผู้ใช้สั่งทีละส่วน
+- **feature ที่เสร็จ:** auth (login), company (ข้อมูลร้าน + โลโก้)
+- **ยังไม่ได้ทำ:** `utils` คำนวณเงิน / ภาษี, `golang-migrate`, feature อื่น ๆ — รอผู้ใช้สั่งทีละส่วน
 
 ---
 
@@ -48,13 +49,14 @@
 - [x] เพิ่ม `DATABASE_URL` ใน config
 - [x] โหลดค่าจากไฟล์ `.env` ตอนพัฒนา ผ่าน `Makefile` (`make run`) + `.env.example`
 - [x] migration: `users` → `000001_create_users` (ผู้ใช้รัน SQL เองใน DBeaver)
-- [ ] migration: `company`, `products`, `product_costs`, `stock_movements`, `transactions`, `invoices`, `invoice_items`, `invoice_numbers`
+- [x] migration: `company` → `000002_create_company` (รันใน DB เครื่องนี้แล้ว) + `sql/company.sql`
+- [ ] migration: `products`, `product_costs`, `stock_movements`, `transactions`, `invoices`, `invoice_items`, `invoice_numbers`
 
 ## Phase 3 — Features (รอคำสั่ง)
 
 แต่ละ feature: model + `Validate()` + test → repository → handler + test (fakeRepository) → ต่อ route
 
-- [ ] company — ข้อมูลบริษัท
+- [x] company — ข้อมูลร้าน (`GET` / `PUT /company`) + โลโก้ (`GET` / `PUT` / `DELETE /company/logo`) + test
 - [ ] product — CRUD สินค้า
 - [ ] cost — รายการต้นทุน + คำนวณ `cost_price` ใหม่
 - [ ] stock — รับเข้า / เบิกออก / ใกล้หมด
@@ -85,7 +87,9 @@
 - [ ] เปิดหน้า `/docs` บน server จริงด้วยไหม (ตอนนี้เปิดตลอด)
 - [ ] ใช้ฐานข้อมูลตัวไหน (ค่าเริ่มต้นใน docs: PostgreSQL)
 - [ ] deploy API และ DB ที่ไหน (เช่น Railway / Render / Fly.io / VPS + Neon / Supabase สำหรับ DB)
-- [ ] ผู้ใช้คนเดียว หรือหลายคน / หลายบริษัท
+- [x] ร้านเดียว หรือหลายร้าน → **1 ระบบ = 1 ร้าน** แต่ละร้านติดตั้งแยก (แบบ local) แก้ข้อมูลร้าน / โลโก้ผ่าน API หน้าเว็บไม่ต้องแก้ (ตัดสินใจ 2026-10-31)
+- [x] เก็บโลโก้ที่ไหน → ใน DB (`BYTEA`) ไม่เกิน 1 MB, PNG / JPG / WebP — ถ้าวันหลังมีรูปสินค้าเยอะค่อยย้ายไปบริการฝากไฟล์ (R2 / S3)
+- [ ] ผู้ใช้หลายคนในร้านเดียว แบ่งสิทธิ์ (admin / พนักงาน) ไหม
 - [ ] รูปแบบเลขที่ใบกำกับ (ค่าเริ่มต้นใน docs: `INV-2026-0001` รันใหม่ทุกปี)
 - [ ] ยกเลิกใบกำกับแล้ว ลบรายรับ หรือบันทึกรายการกลับรายการ (ค่าเริ่มต้นใน docs: ลบรายรับ + คืน stock)
 - [ ] จะเก็บรายการต้นทุนละเอียด (`product_costs`) หรือเก็บแค่ `cost_price` ตัวเดียว
@@ -96,6 +100,8 @@
 
 | วันที่ | ทำอะไร | หมายเหตุ |
 |---|---|---|
+| 2026-10-31 | ใส่ข้อมูลร้านจริงใน DB เครื่องนี้ผ่าน API: MAKEHUB, 33/3 ม.3 ต.ท่าพริก อ.เมือง จ.ตราด 23000, 0909966818 + โลโก้ (PNG 1254×1254, 380 KB) — โหลดกลับมาได้ไฟล์ตรงกัน | ยังไม่มีเลขผู้เสียภาษี / สาขา (ต้องมีก่อนออกใบกำกับภาษี) |
+| 2026-10-31 | **ข้อมูลร้าน + โลโก้**: migration `000002_create_company` (แถวเดียว id = 1, logo `BYTEA`) — รันใน DB แล้ว, `sql/company.sql`, `features/company` (model + Validate, logic `logoContentType`, repository, handler), ต่อ route, เพิ่มใน `openapi.yaml` — test ผ่านทุก package (company 80.8%, ส่วนที่ขาดคือ repository) — ทดสอบจริงกับ DB 13 กรณีผ่าน: ดูข้อมูล / แก้ข้อมูล / ไม่ login ได้ 401 / เลขภาษีผิด 400 / อัปโหลด PNG แล้วโหลดกลับได้ไฟล์ตรงกัน / 2 MB ได้ `logo_too_large` / ไฟล์ข้อความได้ `logo_type_invalid` / ลบโลโก้แล้วได้ 404 / preflight 204 — ล้างข้อมูลทดสอบออกแล้ว (ร้านยังว่าง) | **กระทบ Flutter**: API ใหม่ บันทึกใน `PROGRESS.md` ฝั่ง Flutter แล้ว / ดู + โลโก้ไม่ต้อง login (ให้หน้า login แสดงได้) |
 | 2026-10-31 | เอกสาร Swagger: `docs/openapi.yaml` (health, auth/login, auth/me + Authorize ด้วย Bearer token), `docs/swagger.html`, `docs/docs.go` (go:embed → `GET /docs`, `GET /docs/openapi.yaml`) + test (`docs` 100%, router เพิ่ม `TestRouter_Docs`, `TestRouter_AllRoutesInOpenAPI`) — ตรวจ YAML + `$ref` ทั้งไฟล์ด้วย pyyaml ผ่าน (เจอและแก้ description ที่มี `: ` ไม่ได้ครอบ `"`), รันจริง `/docs` ได้ 200 HTML | ไม่เพิ่ม package — Swagger UI โหลดจาก unpkg (ต้องต่อเน็ตตอนเปิดดู) / test ใน Go เช็คแค่ว่ามี path ครบ ไม่ได้เช็คว่า YAML ถูกรูปแบบ |
 | 2026-10-31 | **API login ใช้งานได้**: เพิ่ม package gin / pgx / golang-jwt / x/crypto, เขียน `main.go`, `config`, `database`, `helpers`, `middleware` (cors, auth), `utils/token.go`, `router`, `features/auth` (model, repository, handler), `Makefile`, `.env.example` + `.env` (JWT_SECRET สุ่มด้วย openssl) — gofmt / vet ผ่าน, test ผ่านทุก package (config / helpers / middleware / router / utils 100%, database 87.5%, auth 77.4% — ส่วนที่ขาดคือ repository ต้องใช้ DB จริง) — ลองรันจริงกับ DB: login `admin@costbook.com` / `1234` ได้ token, รหัสผิด / ไม่มีอีเมล ได้ 401 `invalid_credentials`, `/auth/me` มี token ได้ 200 ไม่มีได้ 401, OPTIONS ได้ 204 | **กระทบ Flutter**: API ใหม่ บันทึกใน `PROGRESS.md` ฝั่ง Flutter แล้ว |
 | 2026-10-31 | เปิด `pgcrypto` ใน DB `costbook` + เพิ่มผู้ใช้ทดสอบ `admin@costbook.com` (รหัส `1234`, ชื่อ Admin CostBook) — hash เป็น bcrypt `$2a$10$` เช็ครหัสผ่านแล้วถูก | ใช้ทดสอบในเครื่องเท่านั้น ยังไม่มี column role (ทุกคนสิทธิ์เท่ากัน) |

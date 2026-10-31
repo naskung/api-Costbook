@@ -21,6 +21,8 @@ tags:
     description: เช็คสถานะ API
   - name: auth
     description: login และข้อมูลผู้ใช้
+  - name: company
+    description: ข้อมูลร้าน (ผู้ขาย) + โลโก้ ใช้บนหน้าเว็บและใบกำกับภาษี — 1 ระบบ = 1 ร้าน
 
 paths:
   /health:
@@ -108,6 +110,155 @@ paths:
         "500":
           $ref: "#/components/responses/ServerError"
 
+  /company:
+    get:
+      tags: [company]
+      summary: ดูข้อมูลร้าน
+      description: ไม่ต้อง login → หน้า login แสดงชื่อร้านได้
+      operationId: getCompany
+      responses:
+        "200":
+          description: ข้อมูลร้าน
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [company]
+      summary: แก้ข้อมูลร้าน
+      description: ส่งมาครบทุกช่อง ช่องที่ไม่ส่งจะกลายเป็นค่าว่าง
+      operationId: updateCompany
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyRequest"
+      responses:
+        "200":
+          description: บันทึกแล้ว ได้ข้อมูลร้านล่าสุด
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+        "400":
+          description: ข้อมูลที่ส่งมาผิด
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalid_json:
+                  summary: JSON ผิดรูปแบบ
+                  value: { error: invalid_json }
+                company_name_required:
+                  summary: ไม่ได้กรอกชื่อร้าน
+                  value: { error: company_name_required }
+                company_tax_id_invalid:
+                  summary: เลขผู้เสียภาษีไม่ใช่ตัวเลข 13 หลัก
+                  value: { error: company_tax_id_invalid }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /company/logo:
+    get:
+      tags: [company]
+      summary: ดูโลโก้ร้าน (ได้เป็นรูป)
+      description: ไม่ต้อง login → หน้า login แสดงโลโก้ได้ / ใช้กับ `Image.network` ได้เลย / ได้ 404 ให้แสดงโลโก้ CostBook แทน
+      operationId: getCompanyLogo
+      responses:
+        "200":
+          description: ไฟล์รูปโลโก้
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: ยังไม่มีโลโก้
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: logo_not_found }
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [company]
+      summary: อัปโหลดโลโก้ (แทนอันเดิม)
+      description: |
+        - ส่งแบบ `multipart/form-data` ช่องชื่อ `logo`
+        - รับแค่ PNG / JPG / WebP (ดูจากข้างในไฟล์จริง ไม่ใช่นามสกุล) ขนาดไม่เกิน 1 MB
+      operationId: uploadCompanyLogo
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [logo]
+              properties:
+                logo:
+                  type: string
+                  format: binary
+                  description: ไฟล์รูป PNG / JPG / WebP ไม่เกิน 1 MB
+      responses:
+        "200":
+          description: บันทึกแล้ว ได้ข้อมูลร้านล่าสุด (has_logo = true)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+        "400":
+          description: ไฟล์ไม่ถูกต้อง
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                logo_required:
+                  summary: ไม่ได้แนบไฟล์ หรือชื่อช่องไม่ใช่ logo
+                  value: { error: logo_required }
+                logo_too_large:
+                  summary: ไฟล์ใหญ่เกิน 1 MB
+                  value: { error: logo_too_large }
+                logo_type_invalid:
+                  summary: ไม่ใช่ PNG / JPG / WebP
+                  value: { error: logo_type_invalid }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags: [company]
+      summary: ลบโลโก้ (กลับไปใช้โลโก้ CostBook)
+      operationId: deleteCompanyLogo
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: ลบแล้ว (ไม่มี body)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -184,3 +335,50 @@ components:
         last_name:
           type: string
           example: CostBook
+
+    Company:
+      type: object
+      required: [name, address, tax_id, branch, phone, has_logo]
+      properties:
+        name:
+          type: string
+          example: ร้านตัวอย่าง
+        address:
+          type: string
+          example: 123 ถนนสุขุมวิท กรุงเทพฯ 10110
+        tax_id:
+          type: string
+          description: เลขผู้เสียภาษี 13 หลัก (ว่างได้)
+          example: "0105555555555"
+        branch:
+          type: string
+          example: สำนักงานใหญ่
+        phone:
+          type: string
+          example: 02-123-4567
+        has_logo:
+          type: boolean
+          description: true = มีโลโก้ โหลดได้จาก GET /company/logo
+          example: true
+
+    CompanyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: ชื่อร้าน (ห้ามว่าง)
+          example: ร้านตัวอย่าง
+        address:
+          type: string
+          example: 123 ถนนสุขุมวิท กรุงเทพฯ 10110
+        tax_id:
+          type: string
+          description: เลขผู้เสียภาษี ตัวเลข 13 หลัก ไม่มีขีด (ว่างได้)
+          example: "0105555555555"
+        branch:
+          type: string
+          example: สำนักงานใหญ่
+        phone:
+          type: string
+          example: 02-123-4567

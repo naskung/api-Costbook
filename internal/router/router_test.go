@@ -31,6 +31,9 @@ func TestRouter(t *testing.T) {
 		{"path ที่ไม่มี ได้ 404", http.MethodGet, "/api/v1/nothing", "", http.StatusNotFound, `{"error":"not_found"}`},
 		{"login มีอยู่จริง (JSON ผิด ได้ 400)", http.MethodPost, "/api/v1/auth/login", "{", http.StatusBadRequest, `{"error":"invalid_json"}`},
 		{"me ต้อง login ก่อน ได้ 401", http.MethodGet, "/api/v1/auth/me", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
+		{"แก้ข้อมูลร้าน ต้อง login ก่อน ได้ 401", http.MethodPut, "/api/v1/company", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
+		{"อัปโหลดโลโก้ ต้อง login ก่อน ได้ 401", http.MethodPut, "/api/v1/company/logo", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
+		{"ลบโลโก้ ต้อง login ก่อน ได้ 401", http.MethodDelete, "/api/v1/company/logo", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
 		{"browser ถามสิทธิ์ (OPTIONS) ได้ 204", http.MethodOptions, "/api/v1/auth/login", "", http.StatusNoContent, ""},
 	}
 

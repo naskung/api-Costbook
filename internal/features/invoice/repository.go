@@ -218,13 +218,14 @@ func insertInvoice(ctx context.Context, tx pgx.Tx, req InvoiceRequest, shop sell
 	return id, err
 }
 
-// addItem บันทึกสินค้า 1 บรรทัด: เก็บชื่อ / หน่วย ณ วันที่ออก
+// addItem บันทึกสินค้า 1 บรรทัด: เก็บชื่อ / หน่วย / ต้นทุน ณ วันที่ออก (ต้นทุนไว้คิดกำไรในหน้าภาพรวม)
 // สินค้าที่นับสต็อก → ตัด stock + บันทึกประวัติเบิกออก / ไม่นับสต็อก (งานสั่งทำ / บริการ) → ไม่ตัด
 func addItem(ctx context.Context, tx pgx.Tx, invoiceID string, lineNo int, item ItemRequest) error {
 	var name, unit string
 	var trackStock bool
-	err := tx.QueryRow(ctx, `SELECT name, unit, track_stock FROM products WHERE id = $1`, item.ProductID).
-		Scan(&name, &unit, &trackStock)
+	var costPrice float64
+	err := tx.QueryRow(ctx, `SELECT name, unit, track_stock, cost_price FROM products WHERE id = $1`, item.ProductID).
+		Scan(&name, &unit, &trackStock, &costPrice)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrProductNotFound
 	}
@@ -233,10 +234,10 @@ func addItem(ctx context.Context, tx pgx.Tx, invoiceID string, lineNo int, item 
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO invoice_items (invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount, stock_cut)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		INSERT INTO invoice_items (invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount, stock_cut, cost_price)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		invoiceID, lineNo, item.ProductID, name, unit, item.Quantity, item.UnitPrice,
-		lineAmount(item.Quantity, item.UnitPrice), trackStock)
+		lineAmount(item.Quantity, item.UnitPrice), trackStock, costPrice)
 	if err != nil {
 		return err
 	}

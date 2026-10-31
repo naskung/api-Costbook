@@ -59,6 +59,7 @@ Flutter Web ──HTTP request──▶ Go API ──SQL──▶ PostgreSQL
 | `golang-migrate` (CLI ไม่ใช่ package) | รันไฟล์ migration | 2 |
 | `github.com/golang-jwt/jwt/v5` | token สำหรับ login | 4 |
 | `golang.org/x/crypto/bcrypt` | เข้ารหัสรหัสผ่าน | 4 |
+| `github.com/anthropics/anthropic-sdk-go/v2` | เรียก Claude (AI) — เช็คราคาตลาด + แชทผู้ช่วย (SDK ทางการของ Anthropic) | AI |
 
 **ใช้ Gin** (ผู้ใช้เลือก 2026-10-31) เพราะคนใช้เยอะที่สุดใน Go หาตัวอย่าง / บทความ / วิดีโอสอนได้ง่าย
 ใช้แค่ router, อ่าน / ตอบ JSON, middleware — **ไม่ใช้** `binding` tag / validator ของ Gin (ใช้ `Validate()` ของเราเอง เพื่อคืน error code ตามที่ Flutter ใช้)
@@ -96,7 +97,8 @@ api-Costbook/
 │       ├── stock/            คงเหลือ / รับเข้า (คิดต้นทุนเฉลี่ย) / เบิกออก (ตาราง stock_movements)
 │       ├── transaction/      รายรับ-รายจ่าย + สรุปรายเดือน
 │       ├── invoice/          เอกสารขาย (ใบกำกับภาษี / ใบเสร็จ): ออกใบ (รันเลข + ตัด stock + บันทึกรายรับ) / ยกเลิก
-│       └── dashboard/        ตัวเลขสรุปหน้าแรก (อ่านอย่างเดียว ไม่มีตารางของตัวเอง)
+│       ├── dashboard/        ตัวเลขสรุปหน้าแรก + กราฟ / กำไรขั้นต้น / ขายดี / เทียบตลาด (อ่านอย่างเดียว ไม่มีตารางของตัวเอง)
+│       └── ai/               Claude: เช็คราคาตลาด (ตาราง market_checks) + แชทผู้ช่วย (claude.go, prompt.go, tools.go, toolbox.go, market.go, chat.go, shop.go)
 ├── migrations/               ไฟล์ SQL สร้าง / แก้ตาราง เช่น 000001_create_users.up.sql / .down.sql
 ├── sql/                      คำสั่ง SQL ไว้ copy ไปรันเองใน DBeaver (select / insert / update / delete) 1 ไฟล์ต่อ 1 ตาราง — API ไม่ได้ใช้
 ├── docs/
@@ -169,7 +171,11 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | 401 | ยังไม่ login / token ผิดหรือหมดอายุ / login ไม่ผ่าน | `unauthorized`, `invalid_credentials` |
 | 404 | ไม่เจอข้อมูล / ไม่มี path นี้ / id ไม่ใช่ UUID | `product_not_found`, `transaction_not_found`, `invoice_not_found`, `logo_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
 | 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled`, `company_tax_id_required` |
+| 422 | AI ปฏิเสธคำขอ (นโยบายความปลอดภัย) | `ai_refused` |
 | 500 | server พัง | `server_error` (ใช้ `helpers.ServerError` → error จริงลง log ไม่ส่งให้ client) |
+| 502 | AI ตอบไม่ครบ / เรียก Claude ไม่สำเร็จ | `ai_no_result`, `ai_error` (รายละเอียดลง log) |
+| 503 | ยังไม่ใส่ API key / key ผิด / Claude ไม่ว่าง | `ai_not_configured`, `ai_key_invalid`, `ai_busy` |
+| 504 | AI ใช้เวลานานเกิน | `ai_timeout` |
 
 ---
 
@@ -216,7 +222,11 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `GET /api/v1/invoices/{id}` | เอกสาร 1 ใบ (Flutter เอาไปสร้าง PDF) |
 | | `POST /api/v1/invoices` | ออกเอกสารขาย — ร้านจด VAT ได้ใบกำกับภาษี ไม่จด ได้ใบเสร็จ |
 | | `POST /api/v1/invoices/{id}/cancel` | ยกเลิกเอกสาร |
-| dashboard ✅ | `GET /api/v1/dashboard?month=2026-10` | ตัวเลขสรุปหน้าแรก |
+| dashboard ✅ | `GET /api/v1/dashboard?month=2026-10` | ตัวเลขสรุปหน้าแรก + ยอดขายรายวัน / ย้อนหลัง 6 เดือน / กำไรขั้นต้น / ขายดี / ตามหมวด / มูลค่าสต็อก / เทียบราคาตลาด |
+| ai ✅ | `GET /api/v1/ai/status` | เปิดใช้ AI ได้ไหม (มี `ANTHROPIC_API_KEY` หรือยัง) |
+| | `POST /api/v1/ai/chat` | แชทกับผู้ช่วย AI (ส่งประวัติแชททั้งหมด ได้คำตอบ + งานที่ AI เสนอ) |
+| | `GET /api/v1/products/{id}/market` | ผลเช็คราคาตลาดครั้งล่าสุด (ไม่เสียเงิน) |
+| | `POST /api/v1/products/{id}/market` | ให้ AI ค้นราคาตลาดใหม่แล้วบันทึกผล (มีค่าใช้จ่าย 1–3 นาที) |
 | auth ✅ | `POST /api/v1/auth/login` | login ได้ token |
 | | `GET /api/v1/auth/me` | ข้อมูลผู้ใช้ที่ login อยู่ (ต้องส่ง token) |
 
@@ -266,6 +276,38 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 - รับเข้า / เบิกออก `{ "product_id", "quantity", "note", "unit_cost", "supplier" }` ใช้ SQL `stock = stock + $1 WHERE stock + $1 >= 0` → เบิกเกินที่มีได้ 409 `stock_not_enough`
 - รับเข้าแล้วใส่ `unit_cost` > 0 → `cost_price` ของสินค้า = ต้นทุนเฉลี่ย `(ของเดิม × ทุนเดิม + ของใหม่ × ทุนใหม่) ÷ จำนวนรวม` (ร้านซื้อมาขายไป ไม่ต้องใช้หน้าคำนวณต้นทุน) — ล็อกแถวสินค้าด้วย `SELECT ... FOR UPDATE` กันรับเข้าพร้อมกันแล้วคิดผิด
 - ประวัติที่มี `invoice_no` = เกิดจากใบกำกับ (out = ออกใบ, in = ยกเลิกใบ)
+
+### รายละเอียด ภาพรวมแบบละเอียด + AI (ทำแล้ว)
+
+**ภาพรวม** (`GET /dashboard`) เพิ่ม `sales`, `previous`, `monthly_trend`, `daily_sales`, `top_products`, `category_sales`, `expense_by_category`, `stock`, `market` (field เดิมยังอยู่ แอปเก่าใช้ได้)
+
+- ยอดขาย = **ก่อน VAT หลังหักส่วนลด** (`invoices.subtotal`) — เงินที่ร้านได้จริง ใช้คิดกำไร
+- ยอดของแต่ละบรรทัด (สินค้าขายดี / ตามหมวด) = ยอดบรรทัด × (`subtotal` ÷ `items_total`) → แบ่งส่วนลดและ VAT ตามสัดส่วน
+- ต้นทุนของที่ขาย = จำนวน × `invoice_items.cost_price` (ต้นทุน **ณ วันที่ขาย** เก็บไว้ตอนออกใบ — แก้ต้นทุนสินค้าทีหลัง กำไรเดือนเก่าไม่เปลี่ยน)
+- กำไรขั้นต้น = ยอดขาย − ต้นทุนของที่ขาย, margin = กำไร ÷ ยอดขาย × 100 (`dashboard/logic.go`)
+- เทียบราคาตลาด: ใช้ราคาที่ลูกค้าจ่าย (ร้านจด VAT ที่ตั้งราคาไม่รวม VAT → บวก VAT ก่อน) เทียบกับช่วงราคาปลีกจากการเช็คครั้งล่าสุด → `below` / `within` / `above` / `unknown`
+- % เทียบเดือนก่อน Flutter คิดเอง จาก `previous`
+
+**AI** (`features/ai`) ใช้ Claude รุ่น `claude-opus-5-5` ผ่าน SDK ทางการ (`ai/claude.go`) — ไม่มี `ANTHROPIC_API_KEY` = ปิด AI (ตอบ 503 `ai_not_configured`) ส่วนอื่นใช้ได้ปกติ
+
+- เปิด **fallback** ไว้: ถ้า Claude ปฏิเสธคำขอเพราะนโยบายความปลอดภัย จะให้รุ่นอื่นตอบแทนในคำขอเดียวกัน (`fallbacks: "default"`) / ยังปฏิเสธ = 422 `ai_refused`
+- `Claude` เป็น interface (`Send`) → test ใช้ตัวปลอม ไม่เรียก API จริง ไม่เสียเงิน
+- คำสั่งของ AI (`ai/prompt.go`) เป็นภาษาไทย ไม่เปลี่ยนตามคำขอ → ใส่ `cache_control` ไว้ ประหยัดค่า AI (วันที่วันนี้แยกเป็นอีกก้อน)
+
+**เช็คราคาตลาด** (`ai/market.go`): ส่งข้อมูลสินค้า + ใบต้นทุน + ช่องเพิ่มเติม + รูปแบบ VAT → Claude ค้นเว็บ (`web_search` ไม่เกิน 8 ครั้ง ตั้งที่อยู่เป็นไทย) → ส่งผลผ่านเครื่องมือ `save_market_report` (schema แบบ strict ได้ข้อมูลตรงรูปแบบเสมอ)
+
+- Claude ค้นนานจนพักกลางทาง (`pause_turn`) → ส่งประวัติกลับไปให้ค้นต่อ / ตอบจบแต่ลืมส่งผล → เตือน 1 ครั้ง ยังไม่ส่ง = 502 `ai_no_result`
+- `cleanReport` (`ai/logic.go`) ทำความสะอาดก่อนเก็บ: ตัวเลขติดลบ → 0, ต่ำสุด > สูงสุด → สลับ, ตัดลิงก์ที่ไม่ใช่ http(s), จำกัดรายการ / ความยาว
+- เก็บทุกครั้งในตาราง `market_checks` (เก็บต้นทุน / ราคาของร้าน ณ วันที่เช็คไว้ด้วย) หน้าเว็บ / ภาพรวมใช้ครั้งล่าสุด
+
+**แชท** (`ai/chat.go`): API ไม่เก็บแชท — Flutter ส่งประวัติทั้งหมดมาทุกครั้ง (เริ่มด้วย user สลับ assistant จบด้วย user ≤ 40 ข้อความ)
+
+- AI ใช้เครื่องมือ (`ai/tools.go` → ทำงานใน `ai/toolbox.go`) วนได้ไม่เกิน 10 รอบต่อคำถาม
+  - อ่านข้อมูล (ทำทันที): `get_shop_info`, `list_products`, `get_cost_sheet`, `get_market_check`, `get_dashboard`, `list_transactions` — ใช้ repository ของ feature อื่นผ่าน `ShopReader` (`ai/shop.go`) ไม่เขียน SQL ซ้ำ
+  - เสนองาน (**ไม่ทำ** แค่ส่งกลับใน `actions`): `propose_create_product`, `propose_update_product`, `propose_stock_in`, `propose_stock_out`, `propose_transaction`, `propose_market_check` — ไม่เกิน 5 งานต่อคำตอบ
+- งานที่เสนอตรวจด้วย `Validate()` เดียวกับ API เส้นจริง + เช็คว่ามีสินค้าจริง / ของพอ / หมวดถูก ผิด → ส่งกลับให้ AI แก้เอง (`tool_result` แบบ `is_error`) ไม่ใช่ error ของ request
+- ผู้ใช้กดยืนยันใน Flutter → Flutter เรียก API เส้นเดิม (`POST /products`, `PUT /products/{id}`, `POST /stock/in|out`, `POST /transactions`, `POST /products/{id}/market`) — `update_product` ส่ง `data` เป็นสินค้าทั้งตัวหลังแก้ (PUT ได้เลย) + `changes` ไว้โชว์
+- ลบสินค้า / ออก-ยกเลิกเอกสาร / แก้ใบต้นทุน / ตั้งค่าร้าน ทำผ่านแชทไม่ได้
 
 ### รายละเอียด transaction / invoice / dashboard (ทำแล้ว)
 
@@ -318,8 +360,9 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), kind (fixed / percent), name, quantity, unit, unit_price, percent, amount |
 | `cost_presets` | รายการต้นทุนที่ใช้บ่อย (`000007`) | id, type, kind, name, unit, unit_price, percent |
 | `invoices` | เอกสารขาย (`000004_create_invoices`) | id, doc_type (tax_invoice / receipt), invoice_no (ห้ามซ้ำ), issue_date, status (issued / cancelled), seller_* + customer_* ณ วันที่ออก, note, prices_include_vat, items_total, discount, subtotal, vat, total, cancelled_at |
-| `invoice_items` | รายการในเอกสาร (`000004`, สินค้าที่อยู่ในนี้ลบไม่ได้) | id, invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount, stock_cut (ตัด stock ไปไหม → ยกเลิกใบคืนเฉพาะที่ตัด) |
+| `invoice_items` | รายการในเอกสาร (`000004`, สินค้าที่อยู่ในนี้ลบไม่ได้) | id, invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount, stock_cut (ตัด stock ไปไหม → ยกเลิกใบคืนเฉพาะที่ตัด), cost_price (ต้นทุน ณ วันที่ขาย `000008`) |
 | `invoice_numbers` | ตัวรันเลขที่ (`000004`) | doc_type + year (คู่กันเป็น key), last_number |
+| `market_checks` | ผลเช็คราคาตลาดด้วย AI (`000008_ai_market`, ลบสินค้า → ลบด้วย) | id, product_id, our_cost_price, our_sell_price, retail_low / high / typical, wholesale_low / high / note, market_cost, suggested_price, confidence (low / medium / high), summary, advice, cost_items (`JSONB`), sources (`JSONB`), created_at |
 | `stock_movements` | ประวัติรับเข้า / เบิกออก (`000005_create_stock_movements`) | id, product_id, type (in / out), quantity, note, unit_cost, supplier, invoice_id, created_at |
 | `transactions` | รายรับ-รายจ่าย (`000006_create_transactions`) | id, type (income / expense), category, amount (> 0), date, note, invoice_id (ห้ามซ้ำ) |
 | `users` | ผู้ใช้ที่ login ได้ (migration `000001_create_users`) | id, email (ห้ามซ้ำ), password_hash (bcrypt), first_name, last_name |
@@ -574,6 +617,7 @@ productHandler.RegisterRoutes(api)
 | `PORT` | `8080` | port ที่ API เปิดรอ |
 | `ALLOWED_ORIGIN` | `*` | เว็บที่อนุญาตให้เรียก API — ตอนพัฒนาใช้ `*` ได้ ขึ้น server จริงต้องใส่โดเมนเว็บ |
 | `DATABASE_URL` | **ต้องมี** | ในเครื่อง: `postgres://manas@localhost:5432/costbook?sslmode=disable` |
+| `ANTHROPIC_API_KEY` | ไม่มี = ปิด AI | API key ของ Claude (สมัครที่ https://platform.claude.com) ใช้เช็คราคาตลาด + แชท — มีค่าใช้จ่ายตามการใช้งาน ห้าม commit |
 | `JWT_SECRET` | **ต้องมี** | ข้อความลับไว้เซ็น token สร้างด้วย `openssl rand -hex 32` — แต่ละเครื่อง / server ใช้คนละค่า ถ้าเปลี่ยน token เก่าใช้ไม่ได้ทั้งหมด (ทุกคนต้อง login ใหม่) |
 | `GIN_MODE` | `debug` | Gin อ่านค่านี้เอง ไม่ต้องเขียนใน config — ตอนพัฒนาไม่ต้องตั้ง (Gin จะพิมพ์ข้อความ debug ให้ดู) ขึ้น server จริงตั้งเป็น `release` |
 

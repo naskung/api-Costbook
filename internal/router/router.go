@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/naskung/api-Costbook/docs"
 	"github.com/naskung/api-Costbook/internal/config"
+	"github.com/naskung/api-Costbook/internal/features/ai"
 	"github.com/naskung/api-Costbook/internal/features/auth"
 	"github.com/naskung/api-Costbook/internal/features/company"
 	"github.com/naskung/api-Costbook/internal/features/cost"
@@ -38,29 +39,43 @@ func New(cfg config.Config, db *pgxpool.Pool) *gin.Engine {
 	authHandler := auth.NewHandler(auth.NewPostgresRepository(db), cfg.JWTSecret)
 	authHandler.RegisterRoutes(api, authRequired)
 
-	companyHandler := company.NewHandler(company.NewPostgresRepository(db))
+	companyRepo := company.NewPostgresRepository(db)
+	companyHandler := company.NewHandler(companyRepo)
 	companyHandler.RegisterRoutes(api, authRequired)
 
-	productHandler := product.NewHandler(product.NewPostgresRepository(db))
+	productRepo := product.NewPostgresRepository(db)
+	productHandler := product.NewHandler(productRepo)
 	productHandler.RegisterRoutes(api, authRequired)
 
-	fieldHandler := field.NewHandler(field.NewPostgresRepository(db))
+	fieldRepo := field.NewPostgresRepository(db)
+	fieldHandler := field.NewHandler(fieldRepo)
 	fieldHandler.RegisterRoutes(api, authRequired)
 
-	costHandler := cost.NewHandler(cost.NewPostgresRepository(db))
+	costRepo := cost.NewPostgresRepository(db)
+	costHandler := cost.NewHandler(costRepo)
 	costHandler.RegisterRoutes(api, authRequired)
 
 	stockHandler := stock.NewHandler(stock.NewPostgresRepository(db))
 	stockHandler.RegisterRoutes(api, authRequired)
 
-	transactionHandler := transaction.NewHandler(transaction.NewPostgresRepository(db))
+	transactionRepo := transaction.NewPostgresRepository(db)
+	transactionHandler := transaction.NewHandler(transactionRepo)
 	transactionHandler.RegisterRoutes(api, authRequired)
 
 	invoiceHandler := invoice.NewHandler(invoice.NewPostgresRepository(db))
 	invoiceHandler.RegisterRoutes(api, authRequired)
 
-	dashboardHandler := dashboard.NewHandler(dashboard.NewPostgresRepository(db))
+	dashboardRepo := dashboard.NewPostgresRepository(db)
+	dashboardHandler := dashboard.NewHandler(dashboardRepo)
 	dashboardHandler.RegisterRoutes(api, authRequired)
+
+	// AI อ่านข้อมูลร้านผ่าน repository ของ feature อื่น (ไม่มี API key = ปิด AI)
+	shop := ai.Shop{
+		CompanyRepo: companyRepo, FieldRepo: fieldRepo, ProductRepo: productRepo,
+		CostRepo: costRepo, DashboardRepo: dashboardRepo, TransactionRepo: transactionRepo,
+	}
+	aiHandler := ai.NewHandler(ai.NewPostgresRepository(db), ai.NewClaude(cfg.AnthropicAPIKey), shop)
+	aiHandler.RegisterRoutes(api, authRequired)
 
 	return r
 }

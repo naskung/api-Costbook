@@ -7,7 +7,8 @@
 
 - **เสร็จแล้ว:** Phase 0, พื้นฐาน API (server, config, router, CORS, helpers), ต่อ DB, login (`POST /auth/login`, `GET /auth/me`)
 - **รันได้แล้ว:** `make run` → `http://localhost:8080/api/v1/health`, เอกสาร Swagger: `http://localhost:8080/docs`
-- **feature ที่เสร็จ:** auth, company, product, field, cost, stock, transaction, invoice, dashboard — **ครบทุกเมนูแล้ว** + **รองรับร้านหลายแบบ** (ทดสอบกับ DB จริง 58 + 43 กรณีผ่าน)
+- **feature ที่เสร็จ:** auth, company, product, field, cost, stock, transaction, invoice, dashboard, ai — **ครบทุกเมนูแล้ว** + **รองรับร้านหลายแบบ** + **ภาพรวมแบบละเอียด + AI เช็คราคาตลาด / แชท** (ทดสอบกับ DB จริง 58 + 43 + 33 กรณีผ่าน)
+- **AI ยังไม่ได้ลองกับ Claude จริง:** ยังไม่มี `ANTHROPIC_API_KEY` — ทดสอบด้วย Claude ปลอมใน test (ใส่ key ใน `.env` แล้วลองได้เลย)
 - **ยังไม่ได้ทำ:** `golang-migrate`, จำกัดขนาด request body, ไฟล์ `sql/` ของตารางใหม่, integration test ของ repository
 
 ---
@@ -73,6 +74,12 @@
   - [x] stock — รับเข้าใส่ต้นทุนต่อหน่วย + ผู้ขาย → คิดต้นทุนเฉลี่ยให้ + test
   - [x] invoice — ใบเสร็จรับเงิน (ร้านไม่จด VAT, เลข `RC-`), ส่วนลดทั้งบิล, ราคารวม VAT แล้ว, ไม่ตัด stock ของงานบริการ + test
   - [ ] ใบกำกับภาษีอย่างย่อ (ผู้ใช้บอกว่ายังไม่ต้อง)
+- [x] ภาพรวมแบบละเอียด + AI (migration `000008_ai_market`):
+  - [x] invoice — เก็บต้นทุน ณ วันที่ขาย (`invoice_items.cost_price`) ไว้คิดกำไรขั้นต้น
+  - [x] dashboard — ยอดขายก่อน VAT / กำไรขั้นต้น / margin / เฉลี่ยต่อบิล, เดือนก่อน, ย้อนหลัง 6 เดือน, รายวัน, ขายดี 5 อันดับ, ตามหมวดสินค้า, รายจ่ายตามหมวด, มูลค่าสต็อก, เทียบราคาตลาด + test
+  - [x] ai — เช็คราคาตลาดด้วย Claude + ค้นเว็บ (`/products/{id}/market`) + test (Claude ปลอม)
+  - [x] ai — แชทผู้ช่วย อ่านข้อมูลร้าน + เสนองานให้ผู้ใช้กดยืนยัน (`/ai/chat`, `/ai/status`) + test (Claude ปลอม)
+  - [ ] ลองกับ Claude จริง (รอ `ANTHROPIC_API_KEY`)
 
 ## Phase 4 — ความปลอดภัยและคุณภาพ
 
@@ -103,6 +110,7 @@
 - [x] รูปแบบเลขที่ใบกำกับ → `INV-2026-0001` รันใหม่ทุกปี (ตามปีของวันที่ออกใบ) (ตัดสินใจ 2026-10-31)
 - [x] ยกเลิกใบกำกับ → ลบรายรับ + คืน stock, ใบกำกับแก้ / ลบไม่ได้, ร้านต้องมีเลขผู้เสียภาษีก่อนออกใบ (ตัดสินใจ 2026-10-31)
 - [x] เก็บต้นทุนละเอียด (`product_costs`) → คำนวณ `cost_price` ให้ (ตัดสินใจ 2026-10-31)
+- [x] AI → Claude (`claude-opus-5-5`) ผ่าน SDK ทางการ / แชท AI แก้ข้อมูลได้ **แต่ต้องกดยืนยันก่อน** (ลบ / ออกใบ / ยกเลิกใบไม่ได้) / เช็คราคาตลาด **กดทีละสินค้าแล้วเก็บผล** / ยังไม่มี API key ทำโค้ดไว้ก่อน (ตัดสินใจ 2026-10-31)
 - [x] ร้านอยากเพิ่มข้อมูลสินค้าเอง → **ช่องข้อมูลเพิ่มเติม** เก็บเป็น JSONB ไม่ ALTER TABLE / ต้นทุน → **จำนวน × ราคาต่อหน่วย + %** + รายการที่ใช้บ่อย / ใบกำกับอย่างย่อ → ยังไม่ทำ (ตัดสินใจ 2026-10-31)
 
 ---
@@ -111,6 +119,7 @@
 
 | วันที่ | ทำอะไร | หมายเหตุ |
 |---|---|---|
+| 2026-10-31 | **ภาพรวมแบบละเอียด + AI**: เพิ่ม package `anthropic-sdk-go/v2` v2.4.0 (ผู้ใช้อนุญาต), migration `000008_ai_market` (รันใน DB `costbook` แล้ว — ทดสอบ up → up ซ้ำ → down → up ใน transaction แล้ว ROLLBACK ผ่าน), invoice เก็บ `cost_price` ณ วันที่ขาย, dashboard ส่งข้อมูลกราฟ / กำไรขั้นต้น / ขายดี / ตามหมวด / มูลค่าสต็อก / เทียบตลาด (`dashboard/logic.go` + test), feature ใหม่ `ai`: เช็คราคาตลาด (web search + เครื่องมือ `save_market_report` แบบ strict, รับมือ `pause_turn`, เตือนเมื่อลืมส่งผล) + แชท (เครื่องมืออ่านข้อมูล 6 ตัว, เสนองาน 6 ตัว ตรวจด้วย `Validate()` เดิม), config `ANTHROPIC_API_KEY` (ไม่ใส่ = ปิด AI), `openapi.yaml` 0.4.0 (26 path / 41 operation) — gofmt / vet / test ผ่านทุก package — e2e กับ DB ชั่วคราว: ชุดใหม่ 33 + ชุดเดิม 58 + 43 กรณีผ่าน | ยังไม่ได้เรียก Claude จริง (ไม่มี API key) — test ใช้ Claude ปลอม / e2e ครั้งแรกเจอ 1 กรณีที่ **ผมคิดค่าที่คาดไว้ผิดเอง** (% ตามหมวด 79.34 ไม่ใช่ 79.35) โค้ดถูก แก้ค่าในสคริปต์ทดสอบ / **กระทบ Flutter**: field ใหม่ใน `GET /dashboard` + เส้น AI ใหม่ บันทึกใน PROGRESS ฝั่ง Flutter แล้ว / **ต้อง restart `make run`** |
 | 2026-10-31 | **รองรับร้านหลายแบบ**: migration `000007_flexible_shop` (รันใน DB `costbook` แล้ว — ตารางยังว่าง, ทดสอบ up → up ซ้ำ → down → up ใน transaction แล้ว ROLLBACK ผ่าน) + company (รูปแบบร้าน 3 ค่า), product (code / category / description / track_stock / custom_fields), feature ใหม่ `field` (`/product-fields`), cost (kind fixed / percent, quantity × unit_price, `/cost-presets`), stock (unit_cost + supplier → ต้นทุนเฉลี่ย, `FOR UPDATE`), invoice (doc_type receipt / tax_invoice, เลข `RC-` แยก, discount, prices_include_vat, stock_cut), dashboard (ใกล้หมดนับเฉพาะ track_stock), `utils.PriceBeforeVAT` + `openapi.yaml` 0.3.0 (23 path / 37 operation) — gofmt / vet / test ผ่านทุก package — e2e กับ DB ชั่วคราว `costbook_e2e`: ชุดเดิม 58 + ชุดใหม่ 43 กรณีผ่าน | e2e ชุดเดิมพัง 12 กรณีตอนแรก: `PUT /company` ที่ไม่ส่งค่าใหม่ทำให้ `vat_registered` กลายเป็น false → แก้เป็น `*bool` + `COALESCE` (ไม่ส่ง = ค่าเดิม) ทำแบบเดียวกันกับ track_stock / custom_fields / **กระทบ Flutter**: field ใหม่หลายตัว + `items[].amount` ในใบต้นทุนเลิกรับ (ใช้ quantity × unit_price) บันทึกใน PROGRESS ฝั่ง Flutter แล้ว / **ต้อง restart `make run`** |
 | 2026-10-31 | **API ทุกเมนู**: product, cost, stock, transaction, invoice, dashboard (model + Validate + logic + repository + handler + test) + migration 000003–000006 (รันใน DB `costbook` แล้ว) + `utils` (Round2, Profit, VAT, CostPerUnit, IsDate, IsUUID, IsTaxID — ย้าย isTaxID จาก company มาไว้ที่นี่) + `helpers` (MonthStart, UUIDParam) + `openapi.yaml` ครบ 29 endpoint (test เช็ค route แปลง `:id` → `{id}` แล้ว) — gofmt / vet / test ผ่านทุก package — ทดสอบจริงกับ DB ชั่วคราว `costbook_e2e` 58 กรณีผ่าน (VAT ทั้งใบ, รันเลข + ขึ้นปีใหม่, ร้านไม่มีเลขภาษี / ของไม่พอแล้ว rollback ไม่ตัด stock, ยกเลิกใบคืน stock + ลบรายรับ, ลบสินค้าในใบไม่ได้, รายรับจากใบลบไม่ได้) | e2e เจอบั๊กลำดับบรรทัดในใบกำกับสลับ (created_at เท่ากันใน transaction) → เพิ่ม `line_no` ใน invoice_items / product_costs (ตารางยังว่าง สร้างใหม่ใน DB แล้ว) / **กระทบ Flutter**: API ใหม่ทั้งหมด บันทึกใน PROGRESS ฝั่ง Flutter แล้ว |
 | 2026-10-31 | ใส่ข้อมูลร้านจริงใน DB เครื่องนี้ผ่าน API: MAKEHUB, 33/3 ม.3 ต.ท่าพริก อ.เมือง จ.ตราด 23000, 0909966818 + โลโก้ (PNG 1254×1254, 380 KB) — โหลดกลับมาได้ไฟล์ตรงกัน | ยังไม่มีเลขผู้เสียภาษี / สาขา (ต้องมีก่อนออกใบกำกับภาษี) |

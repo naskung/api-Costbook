@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.3.0
+  version: 0.4.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -37,6 +37,8 @@ tags:
     description: เอกสารขาย (ใบกำกับภาษี / ใบเสร็จรับเงิน ตามรูปแบบร้าน) — ออกใบแล้วตัด stock + บันทึกรายรับให้อัตโนมัติ แก้ / ลบไม่ได้ ผิดให้ยกเลิก (ต้อง login)
   - name: dashboard
     description: ตัวเลขสรุปหน้าแรก (ต้อง login)
+  - name: ai
+    description: "AI (Claude) เช็คราคาตลาด + แชทผู้ช่วย — ต้องใส่ ANTHROPIC_API_KEY ในไฟล์ .env ไม่ใส่ = ปิด AI (ต้อง login)"
 
 paths:
   /health:
@@ -1083,6 +1085,128 @@ paths:
         "500":
           $ref: "#/components/responses/ServerError"
 
+  /ai/status:
+    get:
+      tags: [ai]
+      summary: เปิดใช้ AI ได้ไหม
+      description: "enabled = false เมื่อยังไม่ได้ใส่ ANTHROPIC_API_KEY (ปุ่ม AI ในหน้าเว็บจะถูกปิด)"
+      operationId: getAIStatus
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: สถานะ AI
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /ai/chat:
+    post:
+      tags: [ai]
+      summary: แชทกับผู้ช่วย AI
+      description: |
+        ส่งประวัติแชททั้งหมด (API ไม่ได้เก็บแชทไว้) — เริ่มด้วย user สลับกับ assistant จบด้วย user ไม่เกิน 40 ข้อความ ข้อความละไม่เกิน 4,000 ตัวอักษร
+
+        AI อ่านข้อมูลร้านได้เอง (สินค้า ต้นทุน สต็อก ภาพรวม รายรับ-รายจ่าย ผลเช็คราคาตลาด)
+        แต่ **แก้ข้อมูลเองไม่ได้** — ได้แค่ `actions` (งานที่เสนอ) ให้ Flutter โชว์ปุ่มยืนยัน แล้วเรียก API เส้นเดิมเมื่อผู้ใช้กด
+      operationId: chatWithAI
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: คำตอบ + งานที่ AI เสนอ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatReply"
+        "400":
+          description: "JSON พัง / ประวัติแชทผิดรูปแบบ (ai_messages_invalid) / ข้อความยาวเกิน (ai_message_too_long)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: ai_messages_invalid }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/AIRefused"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "502":
+          $ref: "#/components/responses/AIBadGateway"
+        "503":
+          $ref: "#/components/responses/AIUnavailable"
+        "504":
+          $ref: "#/components/responses/AITimeout"
+
+  /products/{id}/market:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [ai]
+      summary: ผลเช็คราคาตลาดครั้งล่าสุดของสินค้า
+      description: อ่านผลเดิมที่เก็บไว้ ไม่เสียค่า AI (ไม่มี API key ก็ดูได้)
+      operationId: getMarketCheck
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ผลเช็คครั้งล่าสุด
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketCheck"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: "ยังไม่เคยเช็ค (market_check_not_found) / id ไม่ใช่ UUID (product_not_found)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: market_check_not_found }
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [ai]
+      summary: ให้ AI ค้นราคาตลาดใหม่
+      description: |
+        AI ค้นเว็บ (สูงสุด 8 ครั้ง) หาราคาขายปลีก / ขายส่ง / ต้นทุนในตลาดไทย เทียบกับต้นทุน + ราคาของร้าน แล้วบันทึกผล
+        **มีค่าใช้จ่าย AI ทุกครั้ง** ใช้เวลาประมาณ 1–3 นาที (รอสูงสุด 5 นาที)
+      operationId: checkMarket
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: ผลเช็คใหม่ (บันทึกแล้ว)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketCheck"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "422":
+          $ref: "#/components/responses/AIRefused"
+        "500":
+          $ref: "#/components/responses/ServerError"
+        "502":
+          $ref: "#/components/responses/AIBadGateway"
+        "503":
+          $ref: "#/components/responses/AIUnavailable"
+        "504":
+          $ref: "#/components/responses/AITimeout"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1292,6 +1416,34 @@ components:
             cost_percent_invalid:
               summary: percent ต้องอยู่ระหว่าง 0 ถึง 1000
               value: { error: cost_percent_invalid }
+    AIRefused:
+      description: AI ปฏิเสธคำขอนี้ (นโยบายความปลอดภัย)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: ai_refused }
+    AIBadGateway:
+      description: "AI ตอบไม่ครบ (ai_no_result) / เรียก Claude ไม่สำเร็จ (ai_error — รายละเอียดอยู่ใน log)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: ai_no_result }
+    AIUnavailable:
+      description: "ยังไม่ได้ใส่ API key (ai_not_configured) / API key ผิด (ai_key_invalid) / Claude ไม่ว่าง ลองใหม่ทีหลัง (ai_busy)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: ai_not_configured }
+    AITimeout:
+      description: AI ใช้เวลานานเกิน (ai_timeout)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: ai_timeout }
     CostPresetNotFound:
       description: ไม่มีรายการนี้
       content:
@@ -2116,6 +2268,220 @@ components:
           description: สินค้าใกล้หมด ไม่เกิน 5 ตัว (เหลือน้อยสุดก่อน)
           items:
             $ref: "#/components/schemas/LowStockItem"
+        sales:
+          $ref: "#/components/schemas/SalesSummary"
+        previous:
+          $ref: "#/components/schemas/MonthTotals"
+        monthly_trend:
+          type: array
+          description: ย้อนหลัง 6 เดือน เรียงเก่า → ใหม่ (ตัวสุดท้าย = เดือนที่เลือก)
+          items:
+            $ref: "#/components/schemas/MonthTotals"
+        daily_sales:
+          type: array
+          description: ยอดขายทุกวันของเดือน (วันที่ไม่ขาย = 0)
+          items:
+            $ref: "#/components/schemas/DailySales"
+        previous_daily_sales:
+          type: array
+          description: ยอดขายทุกวันของเดือนก่อน (ไว้วาดเส้นเทียบ)
+          items:
+            $ref: "#/components/schemas/DailySales"
+        top_products:
+          type: array
+          description: สินค้าขายดี 5 อันดับ (ตามยอดขายก่อน VAT หลังหักส่วนลด)
+          items:
+            $ref: "#/components/schemas/ProductSales"
+        category_sales:
+          type: array
+          description: ยอดขายตามหมวดสินค้า มากไปน้อย (category ว่าง = ไม่มีหมวด)
+          items:
+            $ref: "#/components/schemas/CategoryAmount"
+        expense_by_category:
+          type: array
+          description: รายจ่ายตามหมวด มากไปน้อย
+          items:
+            $ref: "#/components/schemas/CategoryAmount"
+        stock:
+          $ref: "#/components/schemas/StockValue"
+        market:
+          type: array
+          description: ราคาของร้านเทียบกับผลเช็คราคาตลาดครั้งล่าสุด (เฉพาะสินค้าที่เคยเช็ค)
+          items:
+            $ref: "#/components/schemas/MarketPosition"
+
+    SalesSummary:
+      type: object
+      description: "ยอดขายจากเอกสารขายของเดือน — net_sales = ก่อน VAT หลังหักส่วนลด (เงินที่ร้านได้จริง), cost = ต้นทุน ณ วันที่ขาย"
+      properties:
+        net_sales: { type: number, example: 1355.14 }
+        cost: { type: number, example: 211.2 }
+        gross_profit: { type: number, example: 1143.94 }
+        gross_margin: { type: number, description: "กำไรขั้นต้น ÷ ยอดขาย × 100", example: 84.41 }
+        vat: { type: number, example: 94.86 }
+        discount: { type: number, example: 50 }
+        items_sold: { type: integer, example: 5 }
+        average_bill: { type: number, description: ยอดขายเฉลี่ยต่อบิล (ก่อน VAT), example: 1355.14 }
+
+    MonthTotals:
+      type: object
+      properties:
+        month: { type: string, example: "2026-10" }
+        income: { type: number, example: 2406.15 }
+        expense: { type: number, example: 0 }
+        profit: { type: number, example: 2406.15 }
+        net_sales: { type: number, description: ยอดขายก่อน VAT จากเอกสารขาย, example: 2250.79 }
+        bills: { type: integer, description: จำนวนเอกสารขายที่ไม่ยกเลิก, example: 9 }
+        gross_profit: { type: number, description: "ยอดขายก่อน VAT − ต้นทุน ณ วันที่ขาย", example: 1775.72 }
+
+    DailySales:
+      type: object
+      properties:
+        date: { type: string, format: date, example: "2026-10-31" }
+        net_sales: { type: number, example: 1355.14 }
+        bills: { type: integer, example: 1 }
+
+    ProductSales:
+      type: object
+      properties:
+        product_id: { type: string, format: uuid }
+        name: { type: string, example: เคสโทรศัพท์พิมพ์ 3D }
+        unit: { type: string, example: ชิ้น }
+        quantity: { type: integer, example: 4 }
+        net_sales: { type: number, example: 903.43 }
+        cost: { type: number, example: 211.2 }
+        profit: { type: number, example: 692.23 }
+        margin: { type: number, description: "กำไร ÷ ยอดขาย × 100", example: 76.62 }
+
+    CategoryAmount:
+      type: object
+      properties:
+        category: { type: string, example: งานพิมพ์ 3D }
+        amount: { type: number, example: 903.43 }
+        percent: { type: number, description: คิดเป็นกี่ % ของทุกหมวด, example: 64.4 }
+
+    StockValue:
+      type: object
+      description: มูลค่าของในสต็อก (เฉพาะสินค้าที่นับสต็อก)
+      properties:
+        cost_value: { type: number, description: "คงเหลือ × ต้นทุน", example: 8422.4 }
+        retail_value: { type: number, description: "คงเหลือ × ราคาขาย", example: 15322 }
+        out_of_stock: { type: integer, description: จำนวนสินค้าที่หมดแล้ว, example: 0 }
+
+    MarketPosition:
+      type: object
+      properties:
+        product_id: { type: string, format: uuid }
+        name: { type: string, example: เคสโทรศัพท์พิมพ์ 3D }
+        customer_price: { type: number, description: "ราคาที่ลูกค้าจ่าย (ร้านจด VAT ที่ราคาไม่รวม VAT → บวก VAT ก่อน)", example: 250 }
+        retail_low: { type: number, example: 199 }
+        retail_high: { type: number, example: 390 }
+        retail_typical: { type: number, example: 259 }
+        position: { type: string, enum: [below, within, above, unknown], description: "ถูกกว่าตลาด / อยู่ในช่วง / แพงกว่า / ไม่มีราคาตลาด" }
+        diff_percent: { type: number, description: "ต่างจากราคาที่เจอบ่อยกี่ % (บวก = แพงกว่า)", example: -3.47 }
+        checked_at: { type: string, format: date-time }
+
+    AIStatus:
+      type: object
+      properties:
+        enabled: { type: boolean, example: true }
+        model: { type: string, example: claude-opus-5-5 }
+
+    MarketCheck:
+      type: object
+      description: "ผลเช็คราคาตลาด — ราคาเป็นบาทต่อหน่วยของร้าน 0 = ไม่รู้ / our_* = ต้นทุน + ราคาของร้าน ณ วันที่เช็ค"
+      properties:
+        id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        our_cost_price: { type: number, example: 52.8 }
+        our_sell_price: { type: number, example: 250 }
+        summary: { type: string, example: ราคาส่วนใหญ่ 199–390 บาท }
+        retail_low: { type: number, example: 199 }
+        retail_high: { type: number, example: 390 }
+        retail_typical: { type: number, example: 259 }
+        wholesale_low: { type: number, example: 120 }
+        wholesale_high: { type: number, example: 150 }
+        wholesale_note: { type: string, example: ขั้นต่ำ 50 ชิ้น }
+        market_cost: { type: number, description: ต้นทุนต่อหน่วยที่ร้านอื่นน่าจะใช้, example: 45 }
+        cost_items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketCostItem"
+        suggested_price: { type: number, description: ราคาที่แนะนำ (ราคาที่ลูกค้าจ่าย), example: 259 }
+        advice: { type: string, example: ตั้ง 259 บาท ใกล้ราคาที่เจอบ่อย }
+        confidence: { type: string, enum: [low, medium, high] }
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketSource"
+        checked_at: { type: string, format: date-time }
+
+    MarketCostItem:
+      type: object
+      properties:
+        name: { type: string, example: เส้น PLA }
+        amount: { type: number, example: 18 }
+        note: { type: string, example: "40 กรัม × 0.45" }
+
+    MarketSource:
+      type: object
+      properties:
+        title: { type: string, example: Shopee }
+        url: { type: string, example: "https://shopee.co.th/..." }
+        price: { type: number, example: 259 }
+        kind: { type: string, enum: [retail, wholesale, material] }
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string, example: สินค้าตัวไหนกำไรดีที่สุด }
+
+    ChatRequest:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+
+    ChatReply:
+      type: object
+      properties:
+        reply: { type: string, example: "กดยืนยันด้านล่างได้เลยครับ" }
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AIAction"
+
+    AIAction:
+      type: object
+      description: |
+        งานที่ AI เสนอ (API ยังไม่ได้ทำ) — ผู้ใช้กดยืนยันแล้ว Flutter เรียก:
+        - create_product → POST /products (data)
+        - update_product → PUT /products/{product_id} (data = สินค้าทั้งตัวหลังแก้, changes = ช่องที่เปลี่ยน)
+        - stock_in / stock_out → POST /stock/in หรือ /stock/out (data)
+        - add_transaction → POST /transactions (data)
+        - market_check → POST /products/{product_id}/market
+      properties:
+        id: { type: string, description: id ของงาน (ไม่ซ้ำในคำตอบเดียว) }
+        type: { type: string, enum: [create_product, update_product, stock_in, stock_out, add_transaction, market_check] }
+        reason: { type: string, example: ผู้ใช้สั่งรับเข้า }
+        product_id: { type: string }
+        product_name: { type: string, example: เคสโทรศัพท์ }
+        changes:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string, example: sell_price }
+              from: { example: 250 }
+              to: { example: 290 }
+        data:
+          type: object
+          description: ข้อมูลที่ส่งให้ API เส้นจริง (ตาม type)
 
     LowStockItem:
       type: object

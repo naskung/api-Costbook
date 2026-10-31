@@ -279,7 +279,9 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 
 ### รายละเอียด ภาพรวมแบบละเอียด + AI (ทำแล้ว)
 
-**ภาพรวม** (`GET /dashboard`) เพิ่ม `sales`, `previous`, `monthly_trend`, `daily_sales`, `top_products`, `category_sales`, `expense_by_category`, `stock`, `market` (field เดิมยังอยู่ แอปเก่าใช้ได้)
+**ภาพรวม** (`GET /dashboard`) เพิ่ม `sales`, `previous`, `monthly_trend`, `daily_sales`, `previous_daily_sales`, `top_products`, `category_sales`, `expense_by_category`, `stock`, `market` (field เดิมยังอยู่ แอปเก่าใช้ได้)
+- แต่ละเดือนใน `monthly_trend` / `previous` มี `bills` (จำนวนเอกสารขาย) และ `gross_profit` ด้วย → หน้าเว็บคิด % เทียบเดือนก่อนได้ทุกตัว
+- `previous_daily_sales` = ยอดขายรายวันของเดือนก่อน (ไว้วาดเส้นเทียบ) — เดือนก่อนคิดด้วย `previousMonthStart` (ม.ค. → ธ.ค. ปีก่อน)
 
 - ยอดขาย = **ก่อน VAT หลังหักส่วนลด** (`invoices.subtotal`) — เงินที่ร้านได้จริง ใช้คิดกำไร
 - ยอดของแต่ละบรรทัด (สินค้าขายดี / ตามหมวด) = ยอดบรรทัด × (`subtotal` ÷ `items_total`) → แบ่งส่วนลดและ VAT ตามสัดส่วน

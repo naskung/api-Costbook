@@ -15,6 +15,8 @@ func TestMovementRequest_Validate(t *testing.T) {
 		{"id สินค้าผิดรูปแบบ ไม่ผ่าน", MovementRequest{ProductID: "abc", Quantity: 10}, "stock_product_required"},
 		{"จำนวน 0 ไม่ผ่าน", MovementRequest{ProductID: productID, Quantity: 0}, "stock_quantity_invalid"},
 		{"จำนวนติดลบ ไม่ผ่าน", MovementRequest{ProductID: productID, Quantity: -3}, "stock_quantity_invalid"},
+		{"รับเข้าพร้อมราคาทุน ผ่าน", MovementRequest{ProductID: productID, Quantity: 10, UnitCost: 5.2, Supplier: "ร้านส่ง"}, ""},
+		{"ราคาทุนติดลบ ไม่ผ่าน", MovementRequest{ProductID: productID, Quantity: 10, UnitCost: -1}, "stock_unit_cost_invalid"},
 	}
 
 	for _, tt := range tests {

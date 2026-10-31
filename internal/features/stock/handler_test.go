@@ -19,6 +19,7 @@ const (
 	testSecret = "test-secret"
 	coffeeID   = "11111111-1111-1111-1111-111111111111"
 	missingID  = "99999999-9999-9999-9999-999999999999"
+	serviceID  = "33333333-3333-3333-3333-333333333333"
 )
 
 // fakeRepository ฐานข้อมูลปลอม เก็บจำนวนคงเหลือของสินค้าใน map ใช้แทน Postgres ตอน test
@@ -46,6 +47,9 @@ func (f *fakeRepository) AddMovement(ctx context.Context, movementType string, r
 	current, found := f.stock[req.ProductID]
 	if !found {
 		return Movement{}, ErrProductNotFound
+	}
+	if req.ProductID == serviceID {
+		return Movement{}, ErrNotTracked
 	}
 	change := req.Quantity
 	if movementType == "out" {
@@ -75,7 +79,7 @@ func sendRequest(router *gin.Engine, method, path, body string) *httptest.Respon
 }
 
 func coffeeRepo() *fakeRepository {
-	return &fakeRepository{stock: map[string]int{coffeeID: 5}}
+	return &fakeRepository{stock: map[string]int{coffeeID: 5, serviceID: 0}}
 }
 
 func TestHandler_List(t *testing.T) {
@@ -163,6 +167,8 @@ func TestHandler_StockInOut(t *testing.T) {
 		{"ไม่มีสินค้านี้ ได้ 404", "/api/v1/stock/in", `{"product_id":"` + missingID + `","quantity":1}`, http.StatusNotFound, `{"error":"product_not_found"}`, 5},
 		{"จำนวน 0 ได้ 400", "/api/v1/stock/in", `{"product_id":"` + coffeeID + `","quantity":0}`, http.StatusBadRequest, `{"error":"stock_quantity_invalid"}`, 5},
 		{"JSON ผิดรูปแบบ ได้ 400", "/api/v1/stock/out", `{`, http.StatusBadRequest, `{"error":"invalid_json"}`, 5},
+		{"สินค้าไม่นับสต็อก ได้ 409", "/api/v1/stock/in", `{"product_id":"` + serviceID + `","quantity":1}`, http.StatusConflict, `{"error":"stock_not_tracked"}`, 5},
+		{"ราคาทุนติดลบ ได้ 400", "/api/v1/stock/in", `{"product_id":"` + coffeeID + `","quantity":1,"unit_cost":-1}`, http.StatusBadRequest, `{"error":"stock_unit_cost_invalid"}`, 5},
 	}
 
 	for _, tt := range tests {

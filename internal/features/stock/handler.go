@@ -86,6 +86,10 @@ func (h *Handler) addMovement(c *gin.Context, movementType string) {
 		helpers.WriteError(c, http.StatusConflict, "stock_not_enough")
 		return
 	}
+	if errors.Is(err, ErrNotTracked) {
+		helpers.WriteError(c, http.StatusConflict, "stock_not_tracked")
+		return
+	}
 	if err != nil {
 		helpers.ServerError(c, err)
 		return

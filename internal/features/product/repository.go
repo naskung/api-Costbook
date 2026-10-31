@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -13,6 +14,12 @@ var ErrNotFound = errors.New("product not found")
 
 // ErrInUse สินค้าเคยอยู่ในใบกำกับแล้ว ลบไม่ได้ (handler จะตอบ 409)
 var ErrInUse = errors.New("product is used in an invoice")
+
+// ErrCodeTaken รหัส / บาร์โค้ดซ้ำกับสินค้าตัวอื่น (handler จะตอบ 409)
+var ErrCodeTaken = errors.New("product code is already used")
+
+// uniqueViolation code ของ Postgres เมื่อบันทึกค่าที่ห้ามซ้ำแล้วซ้ำ
+const uniqueViolation = "23505"
 
 // Repository คือรายการคำสั่งที่คุยกับ DB
 // ทำเป็น interface เพื่อให้ตอน test ใช้ fakeRepository แทน DB จริงได้
@@ -33,7 +40,8 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 }
 
 // productColumns column ที่ใช้อ่านสินค้า เรียงตรงกับ scanProduct
-const productColumns = "id, name, unit, cost_price, sell_price, stock, min_stock, batch_quantity"
+const productColumns = `id, code, name, category, description, unit, cost_price, sell_price,
+	stock, min_stock, batch_quantity, track_stock, custom_fields`
 
 func (r *PostgresRepository) List(ctx context.Context) ([]Product, error) {
 	rows, err := r.db.Query(ctx, `SELECT `+productColumns+` FROM products ORDER BY name`)
@@ -60,21 +68,27 @@ func (r *PostgresRepository) FindByID(ctx context.Context, id string) (Product, 
 
 func (r *PostgresRepository) Create(ctx context.Context, req ProductRequest) (Product, error) {
 	row := r.db.QueryRow(ctx, `
-		INSERT INTO products (name, unit, cost_price, sell_price, min_stock)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO products (code, name, category, description, unit, cost_price, sell_price,
+			min_stock, track_stock, custom_fields)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING `+productColumns,
-		req.Name, req.Unit, req.CostPrice, req.SellPrice, req.MinStock)
-	return scanProduct(row)
+		req.Code, req.Name, req.Category, req.Description, req.Unit, req.CostPrice, req.SellPrice,
+		req.MinStock, req.trackStock(), req.customFields())
+	return codeTakenOr(scanProduct(row))
 }
 
+// Update แก้สินค้า track_stock / custom_fields ที่ไม่ได้ส่งมา (nil → NULL) ใช้ค่าเดิม (COALESCE)
 func (r *PostgresRepository) Update(ctx context.Context, id string, req ProductRequest) (Product, error) {
 	row := r.db.QueryRow(ctx, `
 		UPDATE products
-		SET name = $2, unit = $3, cost_price = $4, sell_price = $5, min_stock = $6, updated_at = now()
+		SET code = $2, name = $3, category = $4, description = $5, unit = $6, cost_price = $7, sell_price = $8,
+			min_stock = $9, track_stock = COALESCE($10, track_stock), custom_fields = COALESCE($11, custom_fields),
+			updated_at = now()
 		WHERE id = $1
 		RETURNING `+productColumns,
-		id, req.Name, req.Unit, req.CostPrice, req.SellPrice, req.MinStock)
-	return scanProduct(row)
+		id, req.Code, req.Name, req.Category, req.Description, req.Unit, req.CostPrice, req.SellPrice,
+		req.MinStock, req.TrackStock, req.CustomFields)
+	return codeTakenOr(scanProduct(row))
 }
 
 func (r *PostgresRepository) Delete(ctx context.Context, id string) error {
@@ -100,9 +114,19 @@ func (r *PostgresRepository) Delete(ctx context.Context, id string) error {
 // scanProduct อ่านผลจาก SELECT / RETURNING ใส่ Product
 func scanProduct(row pgx.Row) (Product, error) {
 	var p Product
-	err := row.Scan(&p.ID, &p.Name, &p.Unit, &p.CostPrice, &p.SellPrice, &p.Stock, &p.MinStock, &p.BatchQuantity)
+	err := row.Scan(&p.ID, &p.Code, &p.Name, &p.Category, &p.Description, &p.Unit, &p.CostPrice, &p.SellPrice,
+		&p.Stock, &p.MinStock, &p.BatchQuantity, &p.TrackStock, &p.CustomFields)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Product{}, ErrNotFound
+	}
+	return p, err
+}
+
+// codeTakenOr เปลี่ยน error "รหัสซ้ำ" ของ Postgres เป็น ErrCodeTaken นอกนั้นส่งต่อเหมือนเดิม
+func codeTakenOr(p Product, err error) (Product, error) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+		return Product{}, ErrCodeTaken
 	}
 	return p, err
 }

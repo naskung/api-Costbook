@@ -8,3 +8,9 @@ const VATPercent = 7
 func VAT(priceBeforeVAT float64) float64 {
 	return Round2(priceBeforeVAT * VATPercent / 100)
 }
+
+// PriceBeforeVAT ถอด VAT ออกจากราคาที่รวม VAT แล้ว เช่น 107 → 100
+// ใช้กับร้านที่ตั้งราคาขายแบบรวม VAT
+func PriceBeforeVAT(totalWithVAT float64) float64 {
+	return Round2(totalWithVAT * 100 / (100 + VATPercent))
+}

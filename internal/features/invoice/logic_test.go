@@ -2,23 +2,33 @@ package invoice
 
 import "testing"
 
+func TestDocTypeFor(t *testing.T) {
+	if got := docTypeFor(true); got != docTaxInvoice {
+		t.Errorf("ร้านจด VAT ได้ %q, ต้องได้ %q", got, docTaxInvoice)
+	}
+	if got := docTypeFor(false); got != docReceipt {
+		t.Errorf("ร้านไม่จด VAT ได้ %q, ต้องได้ %q", got, docReceipt)
+	}
+}
+
 func TestInvoiceNumber(t *testing.T) {
 	tests := []struct {
-		name   string
-		year   int
-		number int
-		want   string
+		name    string
+		docType string
+		year    int
+		number  int
+		want    string
 	}{
-		{"ปี 2026 ใบแรก", 2026, 1, "INV-2026-0001"},
-		{"ปี 2026 ใบที่ 125", 2026, 125, "INV-2026-0125"},
-		{"เกิน 9999 ใบ เลขยาวขึ้น ไม่ตัดทิ้ง", 2027, 10000, "INV-2027-10000"},
+		{"ใบกำกับปี 2026 ใบแรก", docTaxInvoice, 2026, 1, "INV-2026-0001"},
+		{"ใบเสร็จปี 2026 ใบที่ 125", docReceipt, 2026, 125, "RC-2026-0125"},
+		{"เกิน 9999 ใบ เลขยาวขึ้น ไม่ตัดทิ้ง", docTaxInvoice, 2027, 10000, "INV-2027-10000"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := invoiceNumber(tt.year, tt.number)
+			got := invoiceNumber(docPrefix(tt.docType), tt.year, tt.number)
 			if got != tt.want {
-				t.Errorf("invoiceNumber(%d, %d) = %q, ต้องได้ %q", tt.year, tt.number, got, tt.want)
+				t.Errorf("invoiceNumber() = %q, ต้องได้ %q", got, tt.want)
 			}
 		})
 	}
@@ -46,28 +56,35 @@ func TestLineAmount(t *testing.T) {
 	}
 }
 
-func TestTotals(t *testing.T) {
+func TestDocumentAmounts(t *testing.T) {
+	twoFifty := []ItemRequest{{Quantity: 2, UnitPrice: 50}}
+	pennies := []ItemRequest{{Quantity: 1, UnitPrice: 0.1}, {Quantity: 1, UnitPrice: 0.1}, {Quantity: 1, UnitPrice: 0.1}}
+
 	tests := []struct {
-		name         string
-		items        []ItemRequest
-		wantSubtotal float64
-		wantVAT      float64
-		wantTotal    float64
+		name             string
+		items            []ItemRequest
+		discount         float64
+		docType          string
+		pricesIncludeVAT bool
+		want             money
 	}{
-		{"ยอด 100 บาท VAT 7 รวม 107", []ItemRequest{{Quantity: 2, UnitPrice: 50}}, 100, 7, 107},
-		{
-			"VAT คิดจากยอดรวมทั้งใบ ไม่คิดทีละบรรทัด: 0.10 + 0.10 + 0.10 = 0.30 → VAT 0.02",
-			[]ItemRequest{{Quantity: 1, UnitPrice: 0.1}, {Quantity: 1, UnitPrice: 0.1}, {Quantity: 1, UnitPrice: 0.1}},
-			0.3, 0.02, 0.32,
-		},
-		{"ยอด 1,234.56 VAT 86.42 รวม 1,320.98", []ItemRequest{{Quantity: 1, UnitPrice: 1234.56}}, 1234.56, 86.42, 1320.98},
+		{"ใบกำกับ ราคาไม่รวม VAT: 100 + VAT 7 = 107", twoFifty, 0, docTaxInvoice, false,
+			money{itemsTotal: 100, subtotal: 100, vat: 7, total: 107}},
+		{"ใบกำกับ ส่วนลด 10: (100 − 10) + VAT 6.30 = 96.30", twoFifty, 10, docTaxInvoice, false,
+			money{itemsTotal: 100, discount: 10, subtotal: 90, vat: 6.3, total: 96.3}},
+		{"ใบกำกับ ราคารวม VAT แล้ว: ยอดสุทธิ 107 ถอดเป็น 100 + VAT 7", []ItemRequest{{Quantity: 1, UnitPrice: 107}}, 0, docTaxInvoice, true,
+			money{itemsTotal: 107, subtotal: 100, vat: 7, total: 107}},
+		{"ใบเสร็จ (ไม่จด VAT): ไม่มี VAT ยอดสุทธิ 100 − 5 = 95", twoFifty, 5, docReceipt, false,
+			money{itemsTotal: 100, discount: 5, subtotal: 95, total: 95}},
+		{"VAT คิดจากยอดรวมทั้งใบ ไม่คิดทีละบรรทัด: 0.30 → VAT 0.02", pennies, 0, docTaxInvoice, false,
+			money{itemsTotal: 0.3, subtotal: 0.3, vat: 0.02, total: 0.32}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			subtotal, vat, total := totals(tt.items)
-			if subtotal != tt.wantSubtotal || vat != tt.wantVAT || total != tt.wantTotal {
-				t.Errorf("totals() = (%v, %v, %v), ต้องได้ (%v, %v, %v)", subtotal, vat, total, tt.wantSubtotal, tt.wantVAT, tt.wantTotal)
+			got := documentAmounts(tt.items, tt.discount, tt.docType, tt.pricesIncludeVAT)
+			if got != tt.want {
+				t.Errorf("documentAmounts() = %+v, ต้องได้ %+v", got, tt.want)
 			}
 		})
 	}

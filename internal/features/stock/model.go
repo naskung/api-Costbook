@@ -18,7 +18,8 @@ type StockItem struct {
 }
 
 // Movement ประวัติรับเข้า / เบิกออก 1 ครั้ง
-// type: in = รับเข้า, out = เบิกออก / invoice_no ไม่ว่าง = เกิดจากใบกำกับ (ออกใบ = out, ยกเลิกใบ = in)
+// type: in = รับเข้า, out = เบิกออก / invoice_no ไม่ว่าง = เกิดจากเอกสารขาย (ออกใบ = out, ยกเลิกใบ = in)
+// unit_cost = ราคาทุนต่อหน่วยตอนรับเข้า (0 = ไม่ได้ใส่), supplier = ซื้อจากใคร
 type Movement struct {
 	ID          string    `json:"id"`
 	ProductID   string    `json:"product_id"`
@@ -28,14 +29,19 @@ type Movement struct {
 	Quantity    int       `json:"quantity"`
 	Note        string    `json:"note"`
 	InvoiceNo   string    `json:"invoice_no"`
+	UnitCost    float64   `json:"unit_cost"`
+	Supplier    string    `json:"supplier"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
 // MovementRequest ข้อมูลที่รับมาตอนรับเข้า / เบิกออก
+// unit_cost (ใช้ตอนรับเข้า ไม่ใส่ก็ได้) > 0 → คิดต้นทุนเฉลี่ยของสินค้าใหม่
 type MovementRequest struct {
-	ProductID string `json:"product_id"`
-	Quantity  int    `json:"quantity"`
-	Note      string `json:"note"`
+	ProductID string  `json:"product_id"`
+	Quantity  int     `json:"quantity"`
+	Note      string  `json:"note"`
+	UnitCost  float64 `json:"unit_cost"`
+	Supplier  string  `json:"supplier"`
 }
 
 // Validate เช็คข้อมูลก่อนบันทึก คืน error code ("" = ผ่าน)
@@ -45,6 +51,9 @@ func (req MovementRequest) Validate() string {
 	}
 	if req.Quantity <= 0 {
 		return "stock_quantity_invalid"
+	}
+	if req.UnitCost < 0 {
+		return "stock_unit_cost_invalid"
 	}
 	return ""
 }

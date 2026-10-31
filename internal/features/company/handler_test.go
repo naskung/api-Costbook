@@ -35,7 +35,12 @@ func (f *fakeRepository) Update(ctx context.Context, req CompanyRequest) (Compan
 	if f.err != nil {
 		return Company{}, f.err
 	}
-	f.company = Company{Name: req.Name, Address: req.Address, TaxID: req.TaxID, Branch: req.Branch, Phone: req.Phone, HasLogo: f.company.HasLogo}
+	f.company = Company{
+		Name: req.Name, Address: req.Address, TaxID: req.TaxID, Branch: req.Branch, Phone: req.Phone, HasLogo: f.company.HasLogo,
+		VATRegistered:    valueOr(req.VATRegistered, f.company.VATRegistered),
+		PricesIncludeVAT: valueOr(req.PricesIncludeVAT, f.company.PricesIncludeVAT),
+		UseCostPage:      valueOr(req.UseCostPage, f.company.UseCostPage),
+	}
 	return f.company, nil
 }
 
@@ -65,6 +70,14 @@ func (f *fakeRepository) DeleteLogo(ctx context.Context) error {
 	f.logo = Logo{}
 	f.company.HasLogo = false
 	return nil
+}
+
+// valueOr จำลอง COALESCE ของ SQL: ไม่ส่งมา (nil) = ใช้ค่าเดิม
+func valueOr(value *bool, current bool) bool {
+	if value == nil {
+		return current
+	}
+	return *value
 }
 
 // newTestRouter สร้าง Gin router สำหรับ test: route เหมือนของจริง แต่ใช้ fakeRepository แทน DB
@@ -152,6 +165,36 @@ func TestHandler_Update(t *testing.T) {
 	json.NewDecoder(rec.Body).Decode(&got)
 	if got.Name != "ร้านตัวอย่าง" || got.TaxID != "0105555555555" || got.Phone != "02-123-4567" {
 		t.Errorf("ได้ %+v, ต้องได้ข้อมูลที่ส่งไป", got)
+	}
+}
+
+func TestHandler_Update_ShopSettings(t *testing.T) {
+	repo := &fakeRepository{}
+	body := `{"name":"ร้านของชำ","vat_registered":false,"prices_include_vat":true,"use_cost_page":false}`
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/company", strings.NewReader(body))
+	rec := sendRequest(newTestRouter(repo), req, true)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, ต้องได้ %d (body: %s)", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got Company
+	json.NewDecoder(rec.Body).Decode(&got)
+	if got.VATRegistered || !got.PricesIncludeVAT || got.UseCostPage {
+		t.Errorf("ได้ %+v, ต้องได้ vat_registered false, prices_include_vat true, use_cost_page false", got)
+	}
+}
+
+func TestHandler_Update_KeepsShopSettings(t *testing.T) {
+	repo := &fakeRepository{company: Company{Name: "ร้านเดิม", VATRegistered: true, UseCostPage: true}}
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/company", strings.NewReader(`{"name":"ร้านใหม่"}`))
+
+	rec := sendRequest(newTestRouter(repo), req, true)
+
+	var got Company
+	json.NewDecoder(rec.Body).Decode(&got)
+	if !got.VATRegistered || !got.UseCostPage || got.Name != "ร้านใหม่" {
+		t.Errorf("ได้ %+v, ไม่ส่งรูปแบบร้านมา ต้องใช้ค่าเดิม (vat_registered true, use_cost_page true)", got)
 	}
 }
 

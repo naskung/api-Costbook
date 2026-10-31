@@ -62,6 +62,10 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 
 	product, err := h.repo.Create(c.Request.Context(), req)
+	if errors.Is(err, ErrCodeTaken) {
+		helpers.WriteError(c, http.StatusConflict, "product_code_taken")
+		return
+	}
 	if err != nil {
 		helpers.ServerError(c, err)
 		return
@@ -83,6 +87,10 @@ func (h *Handler) Update(c *gin.Context) {
 	product, err := h.repo.Update(c.Request.Context(), id, req)
 	if errors.Is(err, ErrNotFound) {
 		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
+		return
+	}
+	if errors.Is(err, ErrCodeTaken) {
+		helpers.WriteError(c, http.StatusConflict, "product_code_taken")
 		return
 	}
 	if err != nil {

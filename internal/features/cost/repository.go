@@ -11,11 +11,18 @@ import (
 // ErrProductNotFound ใช้บอก handler ว่าไม่เจอสินค้า (handler จะตอบ 404)
 var ErrProductNotFound = errors.New("product not found")
 
+// ErrPresetNotFound ใช้บอก handler ว่าไม่เจอรายการที่ใช้บ่อย (handler จะตอบ 404)
+var ErrPresetNotFound = errors.New("cost preset not found")
+
 // Repository คือรายการคำสั่งที่คุยกับ DB
 // ทำเป็น interface เพื่อให้ตอน test ใช้ fakeRepository แทน DB จริงได้
 type Repository interface {
 	Get(ctx context.Context, productID string) (CostSheet, error)
-	Save(ctx context.Context, productID string, req CostSheetRequest, costPrice float64) (CostSheet, error)
+	Save(ctx context.Context, productID string, req CostSheetRequest, amounts []float64, costPrice float64) (CostSheet, error)
+	ListPresets(ctx context.Context) ([]CostPreset, error)
+	CreatePreset(ctx context.Context, req PresetRequest) (CostPreset, error)
+	UpdatePreset(ctx context.Context, id string, req PresetRequest) (CostPreset, error)
+	DeletePreset(ctx context.Context, id string) error
 }
 
 type PostgresRepository struct {
@@ -45,7 +52,8 @@ func (r *PostgresRepository) Get(ctx context.Context, productID string) (CostShe
 }
 
 // Save แทนที่รายการต้นทุนทั้งหมดของสินค้า + บันทึกต้นทุน / ราคาขายต่อชิ้นใหม่ ทำใน transaction เดียว
-func (r *PostgresRepository) Save(ctx context.Context, productID string, req CostSheetRequest, costPrice float64) (CostSheet, error) {
+// amounts = จำนวนเงินของแต่ละบรรทัด (handler คำนวณด้วย itemAmounts) เรียงตรงกับ req.Items
+func (r *PostgresRepository) Save(ctx context.Context, productID string, req CostSheetRequest, amounts []float64, costPrice float64) (CostSheet, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return CostSheet{}, err
@@ -70,9 +78,9 @@ func (r *PostgresRepository) Save(ctx context.Context, productID string, req Cos
 	}
 	for i, item := range req.Items {
 		_, err = tx.Exec(ctx, `
-			INSERT INTO product_costs (product_id, line_no, type, name, amount)
-			VALUES ($1, $2, $3, $4, $5)`,
-			productID, i+1, item.Type, item.Name, item.Amount)
+			INSERT INTO product_costs (product_id, line_no, type, kind, name, quantity, unit, unit_price, percent, amount)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			productID, i+1, item.Type, item.Kind, item.Name, item.Quantity, item.Unit, item.UnitPrice, item.Percent, amounts[i])
 		if err != nil {
 			return CostSheet{}, err
 		}
@@ -88,7 +96,7 @@ func (r *PostgresRepository) Save(ctx context.Context, productID string, req Cos
 // items รายการต้นทุนของสินค้า เรียงตามประเภท แล้วตามลำดับที่กรอก
 func (r *PostgresRepository) items(ctx context.Context, productID string) ([]CostItem, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, type, name, amount
+		SELECT id, type, kind, name, quantity, unit, unit_price, percent, amount
 		FROM product_costs
 		WHERE product_id = $1
 		ORDER BY CASE type WHEN 'material' THEN 1 WHEN 'labor' THEN 2 ELSE 3 END, line_no`, productID)
@@ -100,11 +108,76 @@ func (r *PostgresRepository) items(ctx context.Context, productID string) ([]Cos
 	items := []CostItem{} // ไม่ใช้ nil → JSON จะได้ [] แทน null
 	for rows.Next() {
 		var item CostItem
-		err := rows.Scan(&item.ID, &item.Type, &item.Name, &item.Amount)
+		err := rows.Scan(&item.ID, &item.Type, &item.Kind, &item.Name, &item.Quantity, &item.Unit,
+			&item.UnitPrice, &item.Percent, &item.Amount)
 		if err != nil {
 			return nil, err
 		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// presetColumns column ที่ใช้อ่านรายการที่ใช้บ่อย เรียงตรงกับ scanPreset
+const presetColumns = "id, type, kind, name, unit, unit_price, percent"
+
+func (r *PostgresRepository) ListPresets(ctx context.Context) ([]CostPreset, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT `+presetColumns+`
+		FROM cost_presets
+		ORDER BY CASE type WHEN 'material' THEN 1 WHEN 'labor' THEN 2 ELSE 3 END, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	presets := []CostPreset{}
+	for rows.Next() {
+		p, err := scanPreset(rows)
+		if err != nil {
+			return nil, err
+		}
+		presets = append(presets, p)
+	}
+	return presets, rows.Err()
+}
+
+func (r *PostgresRepository) CreatePreset(ctx context.Context, req PresetRequest) (CostPreset, error) {
+	row := r.db.QueryRow(ctx, `
+		INSERT INTO cost_presets (type, kind, name, unit, unit_price, percent)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING `+presetColumns,
+		req.Type, req.Kind, req.Name, req.Unit, req.UnitPrice, req.Percent)
+	return scanPreset(row)
+}
+
+func (r *PostgresRepository) UpdatePreset(ctx context.Context, id string, req PresetRequest) (CostPreset, error) {
+	row := r.db.QueryRow(ctx, `
+		UPDATE cost_presets
+		SET type = $2, kind = $3, name = $4, unit = $5, unit_price = $6, percent = $7, updated_at = now()
+		WHERE id = $1
+		RETURNING `+presetColumns,
+		id, req.Type, req.Kind, req.Name, req.Unit, req.UnitPrice, req.Percent)
+	return scanPreset(row)
+}
+
+func (r *PostgresRepository) DeletePreset(ctx context.Context, id string) error {
+	result, err := r.db.Exec(ctx, `DELETE FROM cost_presets WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return ErrPresetNotFound
+	}
+	return nil
+}
+
+// scanPreset อ่านผลจาก SELECT / RETURNING ใส่ CostPreset
+func scanPreset(row pgx.Row) (CostPreset, error) {
+	var p CostPreset
+	err := row.Scan(&p.ID, &p.Type, &p.Kind, &p.Name, &p.Unit, &p.UnitPrice, &p.Percent)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CostPreset{}, ErrPresetNotFound
+	}
+	return p, err
 }

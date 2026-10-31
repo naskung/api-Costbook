@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.2.0
+  version: 0.3.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -25,6 +25,8 @@ tags:
     description: ข้อมูลร้าน (ผู้ขาย) + โลโก้ ใช้บนหน้าเว็บและใบกำกับภาษี — 1 ระบบ = 1 ร้าน
   - name: product
     description: สินค้า (ต้อง login)
+  - name: field
+    description: ช่องข้อมูลเพิ่มเติมของสินค้าที่ร้านตั้งเอง เช่น วัสดุ สี วันหมดอายุ (ต้อง login)
   - name: cost
     description: คำนวณต้นทุนต่อชิ้น จากรายการวัตถุดิบ / ค่าแรง / ค่าใช้จ่ายอื่น (ต้อง login)
   - name: stock
@@ -32,7 +34,7 @@ tags:
   - name: transaction
     description: รายรับ-รายจ่าย และสรุปรายเดือน (ต้อง login)
   - name: invoice
-    description: ใบกำกับภาษี — ออกใบแล้วตัด stock + บันทึกรายรับให้อัตโนมัติ แก้ / ลบไม่ได้ ผิดให้ยกเลิก (ต้อง login)
+    description: เอกสารขาย (ใบกำกับภาษี / ใบเสร็จรับเงิน ตามรูปแบบร้าน) — ออกใบแล้วตัด stock + บันทึกรายรับให้อัตโนมัติ แก้ / ลบไม่ได้ ผิดให้ยกเลิก (ต้อง login)
   - name: dashboard
     description: ตัวเลขสรุปหน้าแรก (ต้อง login)
 
@@ -140,7 +142,7 @@ paths:
     put:
       tags: [company]
       summary: แก้ข้อมูลร้าน
-      description: ส่งมาครบทุกช่อง ช่องที่ไม่ส่งจะกลายเป็นค่าว่าง
+      description: ข้อความส่งมาครบทุกช่อง ช่องที่ไม่ส่งจะกลายเป็นค่าว่าง — รูปแบบร้าน (vat_registered, prices_include_vat, use_cost_page) ไม่ส่งมา = ใช้ค่าเดิม
       operationId: updateCompany
       security:
         - bearerAuth: []
@@ -315,6 +317,8 @@ paths:
           $ref: "#/components/responses/ProductBadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/ProductCodeTaken"
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -343,7 +347,7 @@ paths:
     put:
       tags: [product]
       summary: แก้สินค้า
-      description: แก้จำนวนคงเหลือตรงนี้ไม่ได้ ต้องรับเข้า / เบิกออกที่ /stock
+      description: แก้จำนวนคงเหลือตรงนี้ไม่ได้ ต้องรับเข้า / เบิกออกที่ /stock — ไม่ส่ง track_stock / custom_fields มา = ใช้ค่าเดิม
       operationId: updateProduct
       security:
         - bearerAuth: []
@@ -366,6 +370,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/ProductNotFound"
+        "409":
+          $ref: "#/components/responses/ProductCodeTaken"
         "500":
           $ref: "#/components/responses/ServerError"
     delete:
@@ -417,7 +423,7 @@ paths:
     put:
       tags: [cost]
       summary: บันทึกใบต้นทุน
-      description: "ส่งมาทั้งใบ รายการเดิมถูกแทนที่ทั้งหมด — API คำนวณ cost_price = (วัตถุดิบ + ค่าแรง + ค่าใช้จ่ายอื่น) ÷ batch_quantity แล้วบันทึกลงสินค้า พร้อม sell_price"
+      description: "ส่งมาทั้งใบ รายการเดิมถูกแทนที่ทั้งหมด — แต่ละบรรทัด fixed = quantity × unit_price, percent = percent% ของรวมบรรทัด fixed แล้ว cost_price = (วัตถุดิบ + ค่าแรง + ค่าใช้จ่ายอื่น) ÷ batch_quantity บันทึกลงสินค้า พร้อม sell_price"
       operationId: saveCostSheet
       security:
         - bearerAuth: []
@@ -454,9 +460,15 @@ paths:
                   value: { error: cost_type_invalid }
                 cost_name_required:
                   value: { error: cost_name_required }
+                cost_kind_invalid:
+                  summary: kind ต้องเป็น fixed / percent
+                  value: { error: cost_kind_invalid }
                 cost_amount_invalid:
-                  summary: จำนวนเงินติดลบ
+                  summary: จำนวน / ราคาต่อหน่วยติดลบ
                   value: { error: cost_amount_invalid }
+                cost_percent_invalid:
+                  summary: percent ต้องอยู่ระหว่าง 0 ถึง 1000
+                  value: { error: cost_percent_invalid }
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -464,10 +476,196 @@ paths:
         "500":
           $ref: "#/components/responses/ServerError"
 
+  /product-fields:
+    get:
+      tags: [field]
+      summary: ช่องข้อมูลเพิ่มเติมของสินค้าทั้งหมด (เรียงตาม sort_order)
+      operationId: listProductFields
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: รายการช่อง
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductField"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [field]
+      summary: เพิ่มช่องข้อมูลเพิ่มเติม
+      description: ค่าของช่องในแต่ละสินค้าเก็บใน `custom_fields` ของสินค้า (key = id ของช่อง)
+      operationId: createProductField
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductFieldRequest"
+      responses:
+        "201":
+          description: เพิ่มแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductField"
+        "400":
+          $ref: "#/components/responses/FieldBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /product-fields/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    put:
+      tags: [field]
+      summary: แก้ช่องข้อมูลเพิ่มเติม
+      operationId: updateProductField
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductFieldRequest"
+      responses:
+        "200":
+          description: บันทึกแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductField"
+        "400":
+          $ref: "#/components/responses/FieldBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/FieldNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags: [field]
+      summary: ลบช่องข้อมูลเพิ่มเติม
+      description: ค่าของช่องนี้ในสินค้าทุกตัวถูกลบด้วย
+      operationId: deleteProductField
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: ลบแล้ว (ไม่มี body)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/FieldNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /cost-presets:
+    get:
+      tags: [cost]
+      summary: รายการต้นทุนที่ใช้บ่อย
+      operationId: listCostPresets
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: รายการ (เรียงตามประเภท แล้วตามชื่อ)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CostPreset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [cost]
+      summary: เพิ่มรายการต้นทุนที่ใช้บ่อย
+      operationId: createCostPreset
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CostPresetRequest"
+      responses:
+        "201":
+          description: เพิ่มแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostPreset"
+        "400":
+          $ref: "#/components/responses/CostItemBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /cost-presets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    put:
+      tags: [cost]
+      summary: แก้รายการต้นทุนที่ใช้บ่อย
+      operationId: updateCostPreset
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CostPresetRequest"
+      responses:
+        "200":
+          description: บันทึกแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostPreset"
+        "400":
+          $ref: "#/components/responses/CostItemBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/CostPresetNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags: [cost]
+      summary: ลบรายการต้นทุนที่ใช้บ่อย
+      operationId: deleteCostPreset
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: ลบแล้ว (ไม่มี body)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/CostPresetNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
   /stock:
     get:
       tags: [stock]
-      summary: จำนวนคงเหลือของทุกสินค้า (ใกล้หมดขึ้นก่อน)
+      summary: จำนวนคงเหลือของทุกสินค้าที่นับสต็อก (ใกล้หมดขึ้นก่อน)
       operationId: listStock
       security:
         - bearerAuth: []
@@ -525,6 +723,7 @@ paths:
     post:
       tags: [stock]
       summary: รับสินค้าเข้า
+      description: ใส่ unit_cost (ราคาทุนต่อหน่วย) มาด้วย → คิดต้นทุนเฉลี่ยของสินค้าใหม่ = (ของเดิม × ทุนเดิม + ของใหม่ × ทุนใหม่) ÷ จำนวนรวม
       operationId: stockIn
       security:
         - bearerAuth: []
@@ -543,6 +742,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/ProductNotFound"
+        "409":
+          $ref: "#/components/responses/StockNotTracked"
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -569,7 +770,16 @@ paths:
         "404":
           $ref: "#/components/responses/ProductNotFound"
         "409":
-          $ref: "#/components/responses/StockNotEnough"
+          description: ของในสต็อกไม่พอ / สินค้าไม่นับสต็อก
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                stock_not_enough:
+                  value: { error: stock_not_enough }
+                stock_not_tracked:
+                  value: { error: stock_not_tracked }
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -701,7 +911,7 @@ paths:
   /invoices:
     get:
       tags: [invoice]
-      summary: ใบกำกับภาษีของเดือน (ล่าสุดอยู่บน)
+      summary: เอกสารขายของเดือน (ล่าสุดอยู่บน)
       operationId: listInvoices
       security:
         - bearerAuth: []
@@ -724,16 +934,18 @@ paths:
           $ref: "#/components/responses/ServerError"
     post:
       tags: [invoice]
-      summary: ออกใบกำกับภาษี
+      summary: ออกเอกสารขาย (ใบกำกับภาษี / ใบเสร็จรับเงิน)
       description: |
+        ชนิดเอกสารเลือกจากรูปแบบร้าน (PUT /company): จด VAT → ใบกำกับภาษี `INV-ปี-เลข`, ไม่จด → ใบเสร็จรับเงิน `RC-ปี-เลข` (ไม่มี VAT)
         ทำใน DB transaction เดียว ขั้นไหนพัง ยกเลิกทั้งหมด:
-        1. รันเลขที่ใบ INV-ปี-เลข 4 หลัก (รันใหม่ทุกปี ตามปีของ issue_date)
+        1. รันเลขที่ใบ (รันใหม่ทุกปี แยกตามชนิดเอกสาร)
         2. บันทึกใบ + รายการสินค้า (เก็บข้อมูลร้าน / ชื่อสินค้า ณ วันที่ออก)
-        3. ตัด stock ของทุกสินค้าในใบ
+        3. ตัด stock เฉพาะสินค้าที่นับสต็อก (track_stock)
         4. บันทึกรายรับ หมวด sales
 
-        unit_price เป็นราคาก่อน VAT — VAT 7% คิดจากยอดรวมทั้งใบ
-        ร้านต้องมีเลขผู้เสียภาษีก่อน (PUT /company)
+        ราคาต่อหน่วย: ร้านตั้ง prices_include_vat = true → ราคารวม VAT แล้ว (ถอด VAT ออกมาแสดง), false → ราคาก่อน VAT (บวก VAT 7%)
+        VAT คิดจากยอดรวมทั้งใบหลังหักส่วนลด (discount)
+        ใบกำกับภาษี: ร้านต้องมีเลขผู้เสียภาษี และต้องมีชื่อลูกค้า / ใบเสร็จ: ชื่อลูกค้าว่างได้
       operationId: createInvoice
       security:
         - bearerAuth: []
@@ -763,7 +975,11 @@ paths:
                   summary: "วันที่ต้องเป็นรูปแบบ 2026-10-31"
                   value: { error: invoice_date_invalid }
                 invoice_customer_required:
+                  summary: ใบกำกับภาษีต้องมีชื่อลูกค้า
                   value: { error: invoice_customer_required }
+                invoice_discount_invalid:
+                  summary: ส่วนลดติดลบ / มากกว่ายอดรวม
+                  value: { error: invoice_discount_invalid }
                 invoice_customer_tax_id_invalid:
                   summary: เลขผู้เสียภาษีลูกค้าไม่ใช่ตัวเลข 13 หลัก
                   value: { error: invoice_customer_tax_id_invalid }
@@ -777,7 +993,7 @@ paths:
         "404":
           $ref: "#/components/responses/ProductNotFound"
         "409":
-          description: ของในสต็อกไม่พอ / ร้านยังไม่มีเลขผู้เสียภาษี
+          description: ของในสต็อกไม่พอ / ร้านจด VAT แต่ยังไม่มีเลขผู้เสียภาษี
           content:
             application/json:
               schema:
@@ -795,7 +1011,7 @@ paths:
       - $ref: "#/components/parameters/ID"
     get:
       tags: [invoice]
-      summary: ใบกำกับ 1 ใบ พร้อมรายการสินค้า (Flutter เอาไปสร้าง PDF)
+      summary: เอกสารขาย 1 ใบ พร้อมรายการสินค้า (Flutter เอาไปสร้าง PDF)
       operationId: getInvoice
       security:
         - bearerAuth: []
@@ -819,7 +1035,7 @@ paths:
     post:
       tags: [invoice]
       summary: ยกเลิกใบกำกับ
-      description: ทำใน transaction เดียว — เปลี่ยนสถานะเป็น cancelled + คืน stock + ลบรายรับของใบนี้
+      description: ทำใน transaction เดียว — เปลี่ยนสถานะเป็น cancelled + คืน stock (เฉพาะที่เคยตัด) + ลบรายรับของใบนี้
       operationId: cancelInvoice
       security:
         - bearerAuth: []
@@ -939,6 +1155,9 @@ components:
             product_min_stock_invalid:
               summary: จำนวนขั้นต่ำติดลบ
               value: { error: product_min_stock_invalid }
+            product_custom_fields_invalid:
+              summary: ช่องเพิ่มเติมเกิน 50 ช่อง หรือค่ายาวเกิน 500 ตัวอักษร
+              value: { error: product_custom_fields_invalid }
     MovementCreated:
       description: บันทึกแล้ว ได้ประวัติรายการนี้
       content:
@@ -960,6 +1179,9 @@ components:
             stock_quantity_invalid:
               summary: จำนวนต้องมากกว่า 0
               value: { error: stock_quantity_invalid }
+            stock_unit_cost_invalid:
+              summary: ราคาทุนติดลบ
+              value: { error: stock_unit_cost_invalid }
     StockNotEnough:
       description: ของในสต็อกไม่พอ
       content:
@@ -1008,6 +1230,75 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
           example: { error: invoice_not_found }
+
+    ProductCodeTaken:
+      description: รหัส / บาร์โค้ดซ้ำกับสินค้าตัวอื่น
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: product_code_taken }
+    StockNotTracked:
+      description: สินค้านี้ตั้งไว้ว่าไม่นับสต็อก (งานสั่งทำ / ค่าบริการ)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: stock_not_tracked }
+    FieldBadRequest:
+      description: ข้อมูลช่องผิด
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            invalid_json:
+              value: { error: invalid_json }
+            field_name_required:
+              value: { error: field_name_required }
+            field_type_invalid:
+              summary: type ต้องเป็น text / number / date / select
+              value: { error: field_type_invalid }
+            field_options_required:
+              summary: ช่องแบบ select ต้องมีตัวเลือก และตัวเลือกห้ามว่าง
+              value: { error: field_options_required }
+    FieldNotFound:
+      description: ไม่มีช่องนี้
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: field_not_found }
+    CostItemBadRequest:
+      description: ข้อมูลรายการต้นทุนผิด
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            invalid_json:
+              value: { error: invalid_json }
+            cost_type_invalid:
+              summary: type ต้องเป็น material / labor / overhead
+              value: { error: cost_type_invalid }
+            cost_kind_invalid:
+              summary: kind ต้องเป็น fixed / percent
+              value: { error: cost_kind_invalid }
+            cost_name_required:
+              value: { error: cost_name_required }
+            cost_amount_invalid:
+              summary: จำนวน / ราคาต่อหน่วยติดลบ
+              value: { error: cost_amount_invalid }
+            cost_percent_invalid:
+              summary: percent ต้องอยู่ระหว่าง 0 ถึง 1000
+              value: { error: cost_percent_invalid }
+    CostPresetNotFound:
+      description: ไม่มีรายการนี้
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: cost_preset_not_found }
 
   schemas:
     Error:
@@ -1064,7 +1355,7 @@ components:
 
     Company:
       type: object
-      required: [name, address, tax_id, branch, phone, has_logo]
+      required: [name, address, tax_id, branch, phone, has_logo, vat_registered, prices_include_vat, use_cost_page]
       properties:
         name:
           type: string
@@ -1085,6 +1376,18 @@ components:
         has_logo:
           type: boolean
           description: true = มีโลโก้ โหลดได้จาก GET /company/logo
+          example: true
+        vat_registered:
+          type: boolean
+          description: true = ร้านจด VAT ออกใบกำกับภาษี / false = ออกใบเสร็จรับเงิน ไม่มี VAT
+          example: true
+        prices_include_vat:
+          type: boolean
+          description: true = ราคาขายของสินค้ารวม VAT แล้ว (ราคาป้ายหน้าร้าน)
+          example: false
+        use_cost_page:
+          type: boolean
+          description: true = ใช้หน้าคำนวณต้นทุน (ร้านผลิตเอง) / false = ซ่อนเมนู (ร้านซื้อมาขายไป)
           example: true
 
     CompanyRequest:
@@ -1109,9 +1412,22 @@ components:
           type: string
           example: 02-123-4567
 
+        vat_registered:
+          type: boolean
+          description: true = ร้านจด VAT ออกใบกำกับภาษี / false = ออกใบเสร็จรับเงิน ไม่มี VAT (ไม่ส่งมา = ใช้ค่าเดิม)
+          example: true
+        prices_include_vat:
+          type: boolean
+          description: true = ราคาขายของสินค้ารวม VAT แล้ว (ไม่ส่งมา = ใช้ค่าเดิม)
+          example: false
+        use_cost_page:
+          type: boolean
+          description: true = ใช้หน้าคำนวณต้นทุน / false = ซ่อนเมนู (ไม่ส่งมา = ใช้ค่าเดิม)
+          example: true
+
     Product:
       type: object
-      required: [id, name, unit, cost_price, sell_price, stock, min_stock, batch_quantity]
+      required: [id, code, name, category, description, unit, cost_price, sell_price, stock, min_stock, batch_quantity, track_stock, custom_fields]
       properties:
         id:
           type: string
@@ -1142,6 +1458,26 @@ components:
           type: integer
           description: จำนวนที่ผลิตได้ต่อรอบ (ใช้คำนวณต้นทุนต่อชิ้น)
           example: 1
+        code:
+          type: string
+          description: รหัส / บาร์โค้ด (ห้ามซ้ำ ว่างได้)
+          example: "8851234567890"
+        category:
+          type: string
+          example: เครื่องดื่ม
+        description:
+          type: string
+          example: PLA ขาว ขนาด 7 × 15 ซม.
+        track_stock:
+          type: boolean
+          description: false = ไม่นับสต็อก (งานสั่งทำ / ค่าบริการ) ขายได้ไม่จำกัด / ไม่ส่งมาตอนเพิ่ม-แก้ = true
+          example: true
+        custom_fields:
+          type: object
+          description: ค่าของช่องข้อมูลเพิ่มเติม key = id ของช่อง (GET /product-fields) ค่าเป็นข้อความเสมอ
+          additionalProperties:
+            type: string
+          example: { "a1b2c3d4-0000-0000-0000-000000000001": "PLA" }
 
     ProductRequest:
       type: object
@@ -1166,6 +1502,27 @@ components:
           type: integer
           minimum: 0
           example: 5
+
+        code:
+          type: string
+          description: รหัส / บาร์โค้ด (ห้ามซ้ำ ว่างได้)
+          example: "8851234567890"
+        category:
+          type: string
+          example: เครื่องดื่ม
+        description:
+          type: string
+          example: PLA ขาว ขนาด 7 × 15 ซม.
+        track_stock:
+          type: boolean
+          description: false = ไม่นับสต็อก (งานสั่งทำ / ค่าบริการ) ขายได้ไม่จำกัด / ไม่ส่งมาตอนเพิ่ม-แก้ = true
+          example: true
+        custom_fields:
+          type: object
+          description: ค่าของช่องข้อมูลเพิ่มเติม key = id ของช่อง (GET /product-fields) ค่าเป็นข้อความเสมอ
+          additionalProperties:
+            type: string
+          example: { "a1b2c3d4-0000-0000-0000-000000000001": "PLA" }
 
     CostSheet:
       type: object
@@ -1197,7 +1554,7 @@ components:
 
     CostItem:
       type: object
-      required: [id, type, name, amount]
+      required: [id, type, kind, name, quantity, unit, unit_price, percent, amount]
       properties:
         id:
           type: string
@@ -1206,13 +1563,29 @@ components:
           type: string
           enum: [material, labor, overhead]
           description: material = วัตถุดิบ, labor = ค่าแรง, overhead = ค่าใช้จ่ายอื่น
+        kind:
+          type: string
+          enum: [fixed, percent]
+          description: fixed = quantity × unit_price, percent = percent% ของรวมบรรทัด fixed (เช่น เผื่อเสีย)
         name:
           type: string
-          example: เมล็ดกาแฟ
+          example: เส้น PLA
+        quantity:
+          type: number
+          example: 40
+        unit:
+          type: string
+          example: กรัม
+        unit_price:
+          type: number
+          example: 0.45
+        percent:
+          type: number
+          example: 0
         amount:
           type: number
-          description: จำนวนเงินต่อรอบการผลิต
-          example: 250
+          description: จำนวนเงินที่ API คำนวณให้
+          example: 18
 
     CostSheetRequest:
       type: object
@@ -1233,18 +1606,134 @@ components:
 
     CostItemRequest:
       type: object
-      required: [type, name, amount]
+      required: [type, kind, name]
       properties:
         type:
           type: string
           enum: [material, labor, overhead]
+        kind:
+          type: string
+          enum: [fixed, percent]
         name:
           type: string
-          example: เมล็ดกาแฟ
-        amount:
+          example: เส้น PLA
+        quantity:
           type: number
           minimum: 0
-          example: 250
+          example: 40
+        unit:
+          type: string
+          example: กรัม
+        unit_price:
+          type: number
+          minimum: 0
+          example: 0.45
+        percent:
+          type: number
+          minimum: 0
+          maximum: 1000
+          description: ใช้กับ kind = percent
+          example: 0
+
+    ProductField:
+      type: object
+      required: [id, name, type, options, show_in_list, sort_order]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: วัสดุ
+        type:
+          type: string
+          enum: [text, number, date, select]
+          description: text = ข้อความ, number = ตัวเลข, date = วันที่ (2026-10-31), select = เลือกจาก options
+        options:
+          type: array
+          items:
+            type: string
+          example: [PLA, PETG, เรซิน]
+        show_in_list:
+          type: boolean
+          description: true = แสดงเป็น column ในตารางสินค้า
+        sort_order:
+          type: integer
+          description: ลำดับการแสดง (น้อยขึ้นก่อน)
+          example: 1
+
+    ProductFieldRequest:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+          example: วัสดุ
+        type:
+          type: string
+          enum: [text, number, date, select]
+        options:
+          type: array
+          description: ใช้เฉพาะ select (ชนิดอื่นไม่เก็บ)
+          items:
+            type: string
+          example: [PLA, PETG, เรซิน]
+        show_in_list:
+          type: boolean
+        sort_order:
+          type: integer
+
+    CostPreset:
+      type: object
+      required: [id, type, kind, name, unit, unit_price, percent]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [material, labor, overhead]
+        kind:
+          type: string
+          enum: [fixed, percent]
+        name:
+          type: string
+          example: เส้น PLA
+        unit:
+          type: string
+          example: กรัม
+        unit_price:
+          type: number
+          example: 0.45
+        percent:
+          type: number
+          example: 0
+
+    CostPresetRequest:
+      type: object
+      required: [type, kind, name]
+      properties:
+        type:
+          type: string
+          enum: [material, labor, overhead]
+        kind:
+          type: string
+          enum: [fixed, percent]
+        name:
+          type: string
+          example: เส้น PLA
+        unit:
+          type: string
+          example: กรัม
+        unit_price:
+          type: number
+          minimum: 0
+          example: 0.45
+        percent:
+          type: number
+          minimum: 0
+          maximum: 1000
+          example: 0
 
     StockItem:
       type: object
@@ -1272,7 +1761,7 @@ components:
 
     Movement:
       type: object
-      required: [id, product_id, product_name, unit, type, quantity, note, invoice_no, created_at]
+      required: [id, product_id, product_name, unit, type, quantity, note, invoice_no, unit_cost, supplier, created_at]
       properties:
         id:
           type: string
@@ -1298,8 +1787,16 @@ components:
           example: ซื้อเพิ่มจากร้านส่ง
         invoice_no:
           type: string
-          description: ไม่ว่าง = เกิดจากใบกำกับ (out = ออกใบ, in = ยกเลิกใบ)
+          description: ไม่ว่าง = เกิดจากเอกสารขาย (out = ออกใบ, in = ยกเลิกใบ)
           example: ""
+        unit_cost:
+          type: number
+          description: ราคาทุนต่อหน่วยตอนรับเข้า (0 = ไม่ได้ใส่)
+          example: 5.2
+        supplier:
+          type: string
+          description: ซื้อจากใคร
+          example: ร้านส่ง ABC
         created_at:
           type: string
           format: date-time
@@ -1318,6 +1815,15 @@ components:
         note:
           type: string
           example: ซื้อเพิ่มจากร้านส่ง
+
+        unit_cost:
+          type: number
+          description: ราคาทุนต่อหน่วย (ไม่ใส่ก็ได้) > 0 → คิดต้นทุนเฉลี่ยใหม่
+          example: 5.2
+        supplier:
+          type: string
+          description: ซื้อจากใคร
+          example: ร้านส่ง ABC
 
     Transaction:
       type: object
@@ -1393,11 +1899,15 @@ components:
 
     InvoiceSummary:
       type: object
-      required: [id, invoice_no, issue_date, status, customer_name, total]
+      required: [id, doc_type, invoice_no, issue_date, status, customer_name, total]
       properties:
         id:
           type: string
           format: uuid
+        doc_type:
+          type: string
+          enum: [tax_invoice, receipt]
+          description: tax_invoice = ใบกำกับภาษี, receipt = ใบเสร็จรับเงิน (ไม่มี VAT)
         invoice_no:
           type: string
           example: INV-2026-0001
@@ -1417,12 +1927,17 @@ components:
 
     Invoice:
       type: object
-      required: [id, invoice_no, issue_date, status, seller_name, seller_address, seller_tax_id, seller_branch, seller_phone,
-        customer_name, customer_address, customer_tax_id, customer_branch, note, subtotal, vat, total, items]
+      required: [id, doc_type, invoice_no, issue_date, status, seller_name, seller_address, seller_tax_id, seller_branch, seller_phone,
+        customer_name, customer_address, customer_tax_id, customer_branch, note, prices_include_vat, items_total, discount,
+        subtotal, vat, total, items]
       properties:
         id:
           type: string
           format: uuid
+        doc_type:
+          type: string
+          enum: [tax_invoice, receipt]
+          description: tax_invoice = ใบกำกับภาษี, receipt = ใบเสร็จรับเงิน (ไม่มี VAT)
         invoice_no:
           type: string
           example: INV-2026-0001
@@ -1458,13 +1973,24 @@ components:
           type: string
         note:
           type: string
+        prices_include_vat:
+          type: boolean
+          description: true = ราคาในบรรทัดรวม VAT แล้ว
+        items_total:
+          type: number
+          description: รวมราคาสินค้าทุกบรรทัด
+          example: 110
+        discount:
+          type: number
+          description: ส่วนลดทั้งบิล
+          example: 10
         subtotal:
           type: number
-          description: ยอดรวมก่อน VAT
+          description: มูลค่าก่อน VAT (หลังหักส่วนลด)
           example: 100
         vat:
           type: number
-          description: VAT 7% ของยอดรวมทั้งใบ
+          description: VAT 7% ของยอดรวมทั้งใบ (ใบเสร็จ = 0)
           example: 7
         total:
           type: number
@@ -1505,7 +2031,7 @@ components:
 
     InvoiceRequest:
       type: object
-      required: [issue_date, customer_name, items]
+      required: [issue_date, items]
       properties:
         issue_date:
           type: string
@@ -1513,6 +2039,7 @@ components:
           example: "2026-10-31"
         customer_name:
           type: string
+          description: ใบกำกับภาษีต้องมี / ใบเสร็จว่างได้
           example: บริษัท ลูกค้า จำกัด
         customer_address:
           type: string
@@ -1526,6 +2053,11 @@ components:
           example: สำนักงานใหญ่
         note:
           type: string
+        discount:
+          type: number
+          minimum: 0
+          description: ส่วนลดทั้งบิล (บาท) ห้ามเกินรวมราคาสินค้า
+          example: 10
         items:
           type: array
           minItems: 1
@@ -1546,7 +2078,7 @@ components:
         unit_price:
           type: number
           minimum: 0
-          description: ราคาต่อหน่วย ก่อน VAT
+          description: ราคาต่อหน่วย (ก่อน VAT หรือรวม VAT ตาม prices_include_vat ของร้าน)
           example: 50
 
     Dashboard:

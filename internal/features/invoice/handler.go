@@ -16,8 +16,8 @@ func NewHandler(repo Repository) *Handler {
 	return &Handler{repo: repo}
 }
 
-// RegisterRoutes ต่อ route ของใบกำกับภาษีเข้ากับกลุ่ม /api/v1 (ทุก route ต้อง login)
-// ไม่มี PUT / DELETE เพราะใบกำกับแก้ / ลบไม่ได้ ผิดให้ยกเลิกแล้วออกใบใหม่
+// RegisterRoutes ต่อ route ของเอกสารขาย (ใบกำกับภาษี / ใบเสร็จรับเงิน) เข้ากับกลุ่ม /api/v1 (ทุก route ต้อง login)
+// ไม่มี PUT / DELETE เพราะเอกสารขายแก้ / ลบไม่ได้ ผิดให้ยกเลิกแล้วออกใบใหม่
 func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) {
 	api.GET("/invoices", authRequired, h.List)
 	api.GET("/invoices/:id", authRequired, h.Get)
@@ -105,6 +105,8 @@ func writeRepoError(c *gin.Context, err error) bool {
 		helpers.WriteError(c, http.StatusConflict, "invoice_already_cancelled")
 	case errors.Is(err, ErrSellerTaxIDMissing):
 		helpers.WriteError(c, http.StatusConflict, "company_tax_id_required")
+	case errors.Is(err, ErrCustomerRequired):
+		helpers.WriteError(c, http.StatusBadRequest, "invoice_customer_required")
 	default:
 		helpers.ServerError(c, err)
 	}

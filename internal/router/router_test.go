@@ -35,6 +35,8 @@ func TestRouter(t *testing.T) {
 		{"อัปโหลดโลโก้ ต้อง login ก่อน ได้ 401", http.MethodPut, "/api/v1/company/logo", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
 		{"ลบโลโก้ ต้อง login ก่อน ได้ 401", http.MethodDelete, "/api/v1/company/logo", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
 		{"รายการสินค้า ต้อง login ก่อน ได้ 401", http.MethodGet, "/api/v1/products", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
+		{"ช่องข้อมูลเพิ่มเติม ต้อง login ก่อน ได้ 401", http.MethodGet, "/api/v1/product-fields", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
+		{"รายการต้นทุนที่ใช้บ่อย ต้อง login ก่อน ได้ 401", http.MethodGet, "/api/v1/cost-presets", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
 		{"ใบต้นทุน ต้อง login ก่อน ได้ 401", http.MethodPut, "/api/v1/products/x/costs", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
 		{"รับสินค้าเข้า ต้อง login ก่อน ได้ 401", http.MethodPost, "/api/v1/stock/in", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
 		{"รายรับ-รายจ่าย ต้อง login ก่อน ได้ 401", http.MethodGet, "/api/v1/transactions", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},

@@ -11,6 +11,7 @@ import (
 	"github.com/naskung/api-Costbook/internal/features/company"
 	"github.com/naskung/api-Costbook/internal/features/cost"
 	"github.com/naskung/api-Costbook/internal/features/dashboard"
+	"github.com/naskung/api-Costbook/internal/features/field"
 	"github.com/naskung/api-Costbook/internal/features/invoice"
 	"github.com/naskung/api-Costbook/internal/features/product"
 	"github.com/naskung/api-Costbook/internal/features/stock"
@@ -42,6 +43,9 @@ func New(cfg config.Config, db *pgxpool.Pool) *gin.Engine {
 
 	productHandler := product.NewHandler(product.NewPostgresRepository(db))
 	productHandler.RegisterRoutes(api, authRequired)
+
+	fieldHandler := field.NewHandler(field.NewPostgresRepository(db))
+	fieldHandler.RegisterRoutes(api, authRequired)
 
 	costHandler := cost.NewHandler(cost.NewPostgresRepository(db))
 	costHandler.RegisterRoutes(api, authRequired)

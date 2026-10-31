@@ -52,8 +52,12 @@ func (f *fakeRepository) Create(ctx context.Context, req InvoiceRequest) (Invoic
 	if f.createErr != nil {
 		return Invoice{}, f.createErr
 	}
-	subtotal, vat, total := totals(req.Items)
-	return Invoice{ID: "new-id", InvoiceNo: invoiceNumber(2026, 1), Status: "issued", CustomerName: req.CustomerName, Subtotal: subtotal, VAT: vat, Total: total}, nil
+	m := documentAmounts(req.Items, req.Discount, docTaxInvoice, false)
+	return Invoice{
+		ID: "new-id", DocType: docTaxInvoice, InvoiceNo: invoiceNumber("INV", 2026, 1), Status: "issued",
+		CustomerName: req.CustomerName, ItemsTotal: m.itemsTotal, Discount: m.discount,
+		Subtotal: m.subtotal, VAT: m.vat, Total: m.total,
+	}, nil
 }
 
 func (f *fakeRepository) Cancel(ctx context.Context, id string) (Invoice, error) {
@@ -163,6 +167,8 @@ func TestHandler_Create_Errors(t *testing.T) {
 		{"ร้านไม่มีเลขผู้เสียภาษี ได้ 409", validBody, ErrSellerTaxIDMissing, http.StatusConflict, `{"error":"company_tax_id_required"}`},
 		{"ของในสต็อกไม่พอ ได้ 409", validBody, ErrStockNotEnough, http.StatusConflict, `{"error":"stock_not_enough"}`},
 		{"ไม่มีสินค้านี้ ได้ 404", validBody, ErrProductNotFound, http.StatusNotFound, `{"error":"product_not_found"}`},
+		{"ใบกำกับไม่มีชื่อลูกค้า ได้ 400", validBody, ErrCustomerRequired, http.StatusBadRequest, `{"error":"invoice_customer_required"}`},
+		{"ส่วนลดเกินยอด ได้ 400", `{"issue_date":"2026-10-31","discount":500,"items":[{"product_id":"` + coffeeID + `","quantity":1,"unit_price":50}]}`, nil, http.StatusBadRequest, `{"error":"invoice_discount_invalid"}`},
 		{"DB พัง ได้ 500", validBody, errors.New("db down"), http.StatusInternalServerError, `{"error":"server_error"}`},
 	}
 
@@ -212,5 +218,19 @@ func TestHandler_Cancel(t *testing.T) {
 				t.Errorf("status ของใบ = %q, ต้องได้ %q", got.Status, tt.wantStatusText)
 			}
 		})
+	}
+}
+
+func TestHandler_Create_WithDiscount(t *testing.T) {
+	body := `{"issue_date":"2026-10-31","customer_name":"ลูกค้า","discount":10,"items":[{"product_id":"` + coffeeID + `","quantity":2,"unit_price":50}]}`
+	rec := sendRequest(newTestRouter(issuedRepo()), http.MethodPost, "/api/v1/invoices", body)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, ต้องได้ %d (body: %s)", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var got Invoice
+	json.NewDecoder(rec.Body).Decode(&got)
+	if got.ItemsTotal != 100 || got.Discount != 10 || got.Subtotal != 90 || got.VAT != 6.3 || got.Total != 96.3 {
+		t.Errorf("ได้ %+v, ต้องได้ รวม 100 ส่วนลด 10 ก่อน VAT 90 VAT 6.30 สุทธิ 96.30", got)
 	}
 }

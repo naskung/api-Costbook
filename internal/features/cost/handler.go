@@ -20,6 +20,10 @@ func NewHandler(repo Repository) *Handler {
 func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) {
 	api.GET("/products/:id/costs", authRequired, h.Get)
 	api.PUT("/products/:id/costs", authRequired, h.Save)
+	api.GET("/cost-presets", authRequired, h.ListPresets)
+	api.POST("/cost-presets", authRequired, h.CreatePreset)
+	api.PUT("/cost-presets/:id", authRequired, h.UpdatePreset)
+	api.DELETE("/cost-presets/:id", authRequired, h.DeletePreset)
 }
 
 // Get GET /api/v1/products/:id/costs
@@ -30,12 +34,7 @@ func (h *Handler) Get(c *gin.Context) {
 	}
 
 	sheet, err := h.repo.Get(c.Request.Context(), productID)
-	if errors.Is(err, ErrProductNotFound) {
-		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
-		return
-	}
-	if err != nil {
-		helpers.ServerError(c, err)
+	if writeRepoError(c, err) {
 		return
 	}
 	c.JSON(http.StatusOK, sheet)
@@ -60,14 +59,99 @@ func (h *Handler) Save(c *gin.Context) {
 		return
 	}
 
-	sheet, err := h.repo.Save(c.Request.Context(), productID, req, costPrice(req))
-	if errors.Is(err, ErrProductNotFound) {
-		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
+	amounts := itemAmounts(req.Items)
+	sheet, err := h.repo.Save(c.Request.Context(), productID, req, amounts, costPrice(req.Items, amounts, req.BatchQuantity))
+	if writeRepoError(c, err) {
 		return
 	}
+	c.JSON(http.StatusOK, sheet)
+}
+
+// ListPresets GET /api/v1/cost-presets
+func (h *Handler) ListPresets(c *gin.Context) {
+	presets, err := h.repo.ListPresets(c.Request.Context())
 	if err != nil {
 		helpers.ServerError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, sheet)
+	c.JSON(http.StatusOK, presets)
+}
+
+// CreatePreset POST /api/v1/cost-presets
+func (h *Handler) CreatePreset(c *gin.Context) {
+	req, ok := readPreset(c)
+	if !ok {
+		return
+	}
+
+	preset, err := h.repo.CreatePreset(c.Request.Context(), req)
+	if err != nil {
+		helpers.ServerError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, preset)
+}
+
+// UpdatePreset PUT /api/v1/cost-presets/:id
+func (h *Handler) UpdatePreset(c *gin.Context) {
+	id, ok := helpers.UUIDParam(c, "id", "cost_preset_not_found")
+	if !ok {
+		return
+	}
+	req, ok := readPreset(c)
+	if !ok {
+		return
+	}
+
+	preset, err := h.repo.UpdatePreset(c.Request.Context(), id, req)
+	if writeRepoError(c, err) {
+		return
+	}
+	c.JSON(http.StatusOK, preset)
+}
+
+// DeletePreset DELETE /api/v1/cost-presets/:id
+func (h *Handler) DeletePreset(c *gin.Context) {
+	id, ok := helpers.UUIDParam(c, "id", "cost_preset_not_found")
+	if !ok {
+		return
+	}
+
+	err := h.repo.DeletePreset(c.Request.Context(), id)
+	if writeRepoError(c, err) {
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// readPreset อ่าน JSON + Validate() ไม่ผ่าน → ตอบ 400 แล้วคืน ok = false
+func readPreset(c *gin.Context) (PresetRequest, bool) {
+	var req PresetRequest
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
+		helpers.WriteError(c, http.StatusBadRequest, "invalid_json")
+		return req, false
+	}
+
+	code := req.Validate()
+	if code != "" {
+		helpers.WriteError(c, http.StatusBadRequest, code)
+		return req, false
+	}
+	return req, true
+}
+
+// writeRepoError ตอบ error จาก repository คืน true ถ้ามี error (handler ต้อง return)
+func writeRepoError(c *gin.Context, err error) bool {
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, ErrProductNotFound):
+		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
+	case errors.Is(err, ErrPresetNotFound):
+		helpers.WriteError(c, http.StatusNotFound, "cost_preset_not_found")
+	default:
+		helpers.ServerError(c, err)
+	}
+	return true
 }

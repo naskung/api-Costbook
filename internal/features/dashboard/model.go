@@ -1,7 +1,7 @@
 package dashboard
 
 // Dashboard ตัวเลขสรุปของหน้าแรก (เดือนที่เลือก)
-// invoice_count / invoice_total นับเฉพาะใบที่ยังไม่ยกเลิก
+// invoice_count / invoice_total นับเฉพาะเอกสารขายที่ยังไม่ยกเลิก / low_stock ไม่นับสินค้าที่ไม่นับสต็อก
 type Dashboard struct {
 	Month         string         `json:"month"`
 	Income        float64        `json:"income"`

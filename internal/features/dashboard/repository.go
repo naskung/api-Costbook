@@ -49,7 +49,7 @@ func (r *PostgresRepository) Get(ctx context.Context, monthStart string) (Dashbo
 	}
 
 	err = r.db.QueryRow(ctx, `
-		SELECT COUNT(*), COUNT(*) FILTER (WHERE stock <= min_stock)
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE track_stock AND stock <= min_stock)
 		FROM products`).
 		Scan(&d.ProductCount, &d.LowStockCount)
 	if err != nil {
@@ -60,12 +60,12 @@ func (r *PostgresRepository) Get(ctx context.Context, monthStart string) (Dashbo
 	return d, err
 }
 
-// lowStock สินค้าใกล้หมด เรียงจากเหลือน้อยที่สุด (ของหมดแล้วขึ้นก่อน)
+// lowStock สินค้าใกล้หมด (เฉพาะที่นับสต็อก) เรียงจากเหลือน้อยที่สุด (ของหมดแล้วขึ้นก่อน)
 func (r *PostgresRepository) lowStock(ctx context.Context) ([]LowStockItem, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, name, unit, stock, min_stock
 		FROM products
-		WHERE stock <= min_stock
+		WHERE track_stock AND stock <= min_stock
 		ORDER BY stock, name
 		LIMIT $1`, lowStockLimit)
 	if err != nil {

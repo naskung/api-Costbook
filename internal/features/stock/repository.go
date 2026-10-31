@@ -14,6 +14,9 @@ var ErrProductNotFound = errors.New("product not found")
 // ErrNotEnough เบิกออกมากกว่าที่มีอยู่ (handler จะตอบ 409)
 var ErrNotEnough = errors.New("stock not enough")
 
+// ErrNotTracked สินค้านี้ตั้งไว้ว่าไม่นับสต็อก (งานสั่งทำ / ค่าบริการ) (handler จะตอบ 409)
+var ErrNotTracked = errors.New("product does not track stock")
+
 // Repository คือรายการคำสั่งที่คุยกับ DB
 // ทำเป็น interface เพื่อให้ตอน test ใช้ fakeRepository แทน DB จริงได้
 type Repository interface {
@@ -30,12 +33,12 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{db: db}
 }
 
-// List จำนวนคงเหลือของทุกสินค้า (onlyLow = true → เฉพาะที่ใกล้หมด)
+// List จำนวนคงเหลือของทุกสินค้าที่นับสต็อก (onlyLow = true → เฉพาะที่ใกล้หมด)
 func (r *PostgresRepository) List(ctx context.Context, onlyLow bool) ([]StockItem, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, name, unit, stock, min_stock, stock <= min_stock
 		FROM products
-		WHERE $1 = false OR stock <= min_stock
+		WHERE track_stock AND ($1 = false OR stock <= min_stock)
 		ORDER BY stock <= min_stock DESC, name`, onlyLow)
 	if err != nil {
 		return nil, err
@@ -56,7 +59,8 @@ func (r *PostgresRepository) List(ctx context.Context, onlyLow bool) ([]StockIte
 
 // movementSelect อ่านประวัติพร้อมชื่อสินค้าและเลขที่ใบกำกับ เรียงตรงกับ scanMovement
 const movementSelect = `
-	SELECT m.id, m.product_id, p.name, p.unit, m.type, m.quantity, m.note, COALESCE(i.invoice_no, ''), m.created_at
+	SELECT m.id, m.product_id, p.name, p.unit, m.type, m.quantity, m.note, COALESCE(i.invoice_no, ''),
+		m.unit_cost, m.supplier, m.created_at
 	FROM stock_movements m
 	JOIN products p ON p.id = m.product_id
 	LEFT JOIN invoices i ON i.id = m.invoice_id`
@@ -83,35 +87,42 @@ func (r *PostgresRepository) Movements(ctx context.Context, productID string) ([
 	return movements, rows.Err()
 }
 
-// AddMovement รับเข้า (in) / เบิกออก (out): แก้จำนวนคงเหลือ + บันทึกประวัติ ทำใน transaction เดียว
+// AddMovement รับเข้า (in) / เบิกออก (out): แก้จำนวนคงเหลือ (+ ต้นทุนเฉลี่ย) + บันทึกประวัติ ทำใน transaction เดียว
 func (r *PostgresRepository) AddMovement(ctx context.Context, movementType string, req MovementRequest) (Movement, error) {
-	change := req.Quantity
-	if movementType == "out" {
-		change = -req.Quantity
-	}
-
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return Movement{}, err
 	}
 	defer tx.Rollback(ctx) // ถ้า Commit แล้ว คำสั่งนี้ไม่ทำอะไร
 
-	// stock + change >= 0 → เบิกเกินที่มีไม่ได้ (ไม่มีแถวไหนถูกแก้)
-	result, err := tx.Exec(ctx, `
-		UPDATE products SET stock = stock + $1, updated_at = now()
-		WHERE id = $2 AND stock + $1 >= 0`, change, req.ProductID)
+	stock, cost, err := lockProduct(ctx, tx, req.ProductID)
 	if err != nil {
 		return Movement{}, err
 	}
-	if result.RowsAffected() == 0 {
-		return Movement{}, r.notFoundOrNotEnough(ctx, req.ProductID)
+
+	if movementType == "out" {
+		if stock < req.Quantity {
+			return Movement{}, ErrNotEnough
+		}
+		stock -= req.Quantity
+	} else {
+		if req.UnitCost > 0 {
+			cost = averageCost(stock, cost, req.Quantity, req.UnitCost)
+		}
+		stock += req.Quantity
+	}
+
+	_, err = tx.Exec(ctx, `UPDATE products SET stock = $2, cost_price = $3, updated_at = now() WHERE id = $1`,
+		req.ProductID, stock, cost)
+	if err != nil {
+		return Movement{}, err
 	}
 
 	var id string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO stock_movements (product_id, type, quantity, note)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id`, req.ProductID, movementType, req.Quantity, req.Note).Scan(&id)
+		INSERT INTO stock_movements (product_id, type, quantity, note, unit_cost, supplier)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id`, req.ProductID, movementType, req.Quantity, req.Note, req.UnitCost, req.Supplier).Scan(&id)
 	if err != nil {
 		return Movement{}, err
 	}
@@ -123,22 +134,29 @@ func (r *PostgresRepository) AddMovement(ctx context.Context, movementType strin
 	return movement, tx.Commit(ctx)
 }
 
-// notFoundOrNotEnough แก้จำนวนไม่ได้ เพราะไม่มีสินค้านี้ หรือของไม่พอ
-func (r *PostgresRepository) notFoundOrNotEnough(ctx context.Context, productID string) error {
-	var exists bool
-	err := r.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM products WHERE id = $1)`, productID).Scan(&exists)
+// lockProduct อ่านจำนวนคงเหลือ + ต้นทุนของสินค้า แล้วล็อกแถวไว้จนจบ transaction (กันกดพร้อมกันแล้วตัวเลขเพี้ยน)
+func lockProduct(ctx context.Context, tx pgx.Tx, productID string) (int, float64, error) {
+	var stock int
+	var cost float64
+	var trackStock bool
+	err := tx.QueryRow(ctx, `SELECT stock, cost_price, track_stock FROM products WHERE id = $1 FOR UPDATE`, productID).
+		Scan(&stock, &cost, &trackStock)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, 0, ErrProductNotFound
+	}
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
-	if !exists {
-		return ErrProductNotFound
+	if !trackStock {
+		return 0, 0, ErrNotTracked
 	}
-	return ErrNotEnough
+	return stock, cost, nil
 }
 
 // scanMovement อ่านผลจาก movementSelect ใส่ Movement
 func scanMovement(row pgx.Row) (Movement, error) {
 	var m Movement
-	err := row.Scan(&m.ID, &m.ProductID, &m.ProductName, &m.Unit, &m.Type, &m.Quantity, &m.Note, &m.InvoiceNo, &m.CreatedAt)
+	err := row.Scan(&m.ID, &m.ProductID, &m.ProductName, &m.Unit, &m.Type, &m.Quantity, &m.Note, &m.InvoiceNo,
+		&m.UnitCost, &m.Supplier, &m.CreatedAt)
 	return m, err
 }

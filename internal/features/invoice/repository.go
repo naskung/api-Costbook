@@ -3,6 +3,7 @@ package invoice
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +16,7 @@ var (
 	ErrStockNotEnough     = errors.New("stock not enough")                      // 409 stock_not_enough
 	ErrAlreadyCancelled   = errors.New("invoice already cancelled")             // 409 invoice_already_cancelled
 	ErrSellerTaxIDMissing = errors.New("company tax id is required to invoice") // 409 company_tax_id_required
+	ErrCustomerRequired   = errors.New("tax invoice needs a customer name")     // 400 invoice_customer_required
 )
 
 // Repository คือรายการคำสั่งที่คุยกับ DB
@@ -34,14 +36,15 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{db: db}
 }
 
-// seller ข้อมูลร้าน ณ ตอนออกใบ (copy ไปเก็บในใบกำกับ)
+// seller ข้อมูลร้าน ณ ตอนออกใบ (copy ไปเก็บในเอกสาร) + รูปแบบร้าน
 type seller struct {
 	name, address, taxID, branch, phone string
+	vatRegistered, pricesIncludeVAT     bool
 }
 
 func (r *PostgresRepository) List(ctx context.Context, monthStart string) ([]InvoiceSummary, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, invoice_no, issue_date::text, status, customer_name, total
+		SELECT id, doc_type, invoice_no, issue_date::text, status, customer_name, total
 		FROM invoices
 		WHERE issue_date >= $1::date AND issue_date < $1::date + interval '1 month'
 		ORDER BY issue_date DESC, invoice_no DESC`, monthStart)
@@ -53,7 +56,7 @@ func (r *PostgresRepository) List(ctx context.Context, monthStart string) ([]Inv
 	invoices := []InvoiceSummary{} // ไม่ใช้ nil → JSON จะได้ [] แทน null
 	for rows.Next() {
 		var s InvoiceSummary
-		err := rows.Scan(&s.ID, &s.InvoiceNo, &s.IssueDate, &s.Status, &s.CustomerName, &s.Total)
+		err := rows.Scan(&s.ID, &s.DocType, &s.InvoiceNo, &s.IssueDate, &s.Status, &s.CustomerName, &s.Total)
 		if err != nil {
 			return nil, err
 		}
@@ -65,16 +68,16 @@ func (r *PostgresRepository) List(ctx context.Context, monthStart string) ([]Inv
 func (r *PostgresRepository) FindByID(ctx context.Context, id string) (Invoice, error) {
 	var inv Invoice
 	err := r.db.QueryRow(ctx, `
-		SELECT id, invoice_no, issue_date::text, status,
+		SELECT id, doc_type, invoice_no, issue_date::text, status,
 			seller_name, seller_address, seller_tax_id, seller_branch, seller_phone,
 			customer_name, customer_address, customer_tax_id, customer_branch,
-			note, subtotal, vat, total
+			note, prices_include_vat, items_total, discount, subtotal, vat, total
 		FROM invoices
 		WHERE id = $1`, id).
-		Scan(&inv.ID, &inv.InvoiceNo, &inv.IssueDate, &inv.Status,
+		Scan(&inv.ID, &inv.DocType, &inv.InvoiceNo, &inv.IssueDate, &inv.Status,
 			&inv.SellerName, &inv.SellerAddress, &inv.SellerTaxID, &inv.SellerBranch, &inv.SellerPhone,
 			&inv.CustomerName, &inv.CustomerAddress, &inv.CustomerTaxID, &inv.CustomerBranch,
-			&inv.Note, &inv.Subtotal, &inv.VAT, &inv.Total)
+			&inv.Note, &inv.PricesIncludeVAT, &inv.ItemsTotal, &inv.Discount, &inv.Subtotal, &inv.VAT, &inv.Total)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Invoice{}, ErrNotFound
 	}
@@ -86,8 +89,9 @@ func (r *PostgresRepository) FindByID(ctx context.Context, id string) (Invoice, 
 	return inv, err
 }
 
-// Create ออกใบกำกับ ทำใน transaction เดียว ขั้นไหนพัง ยกเลิกทั้งหมด:
-// 1. รันเลขที่ใบ  2. บันทึกใบ + รายการสินค้า  3. ตัด stock + บันทึกประวัติ  4. บันทึกรายรับ
+// Create ออกเอกสารขาย ทำใน transaction เดียว ขั้นไหนพัง ยกเลิกทั้งหมด:
+// 1. เลือกชนิดเอกสารจากรูปแบบร้าน + รันเลขที่ใบ  2. บันทึกใบ + รายการสินค้า
+// 3. ตัด stock + บันทึกประวัติ (เฉพาะสินค้าที่นับสต็อก)  4. บันทึกรายรับ
 func (r *PostgresRepository) Create(ctx context.Context, req InvoiceRequest) (Invoice, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -99,11 +103,20 @@ func (r *PostgresRepository) Create(ctx context.Context, req InvoiceRequest) (In
 	if err != nil {
 		return Invoice{}, err
 	}
-	invoiceNo, err := nextInvoiceNo(ctx, tx, req.IssueDate)
+	docType := docTypeFor(shop.vatRegistered)
+	if docType == docTaxInvoice && shop.taxID == "" {
+		return Invoice{}, ErrSellerTaxIDMissing
+	}
+	if docType == docTaxInvoice && strings.TrimSpace(req.CustomerName) == "" {
+		return Invoice{}, ErrCustomerRequired
+	}
+
+	invoiceNo, err := nextInvoiceNo(ctx, tx, docType, req.IssueDate)
 	if err != nil {
 		return Invoice{}, err
 	}
-	invoiceID, total, err := insertInvoice(ctx, tx, req, shop, invoiceNo)
+	amounts := documentAmounts(req.Items, req.Discount, docType, shop.pricesIncludeVAT)
+	invoiceID, err := insertInvoice(ctx, tx, req, shop, docType, invoiceNo, amounts)
 	if err != nil {
 		return Invoice{}, err
 	}
@@ -116,7 +129,7 @@ func (r *PostgresRepository) Create(ctx context.Context, req InvoiceRequest) (In
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO transactions (type, category, amount, date, note, invoice_id)
-		VALUES ('income', 'sales', $1, $2::date, $3, $4)`, total, req.IssueDate, invoiceNo, invoiceID)
+		VALUES ('income', 'sales', $1, $2::date, $3, $4)`, amounts.total, req.IssueDate, invoiceNo, invoiceID)
 	if err != nil {
 		return Invoice{}, err
 	}
@@ -162,57 +175,56 @@ func (r *PostgresRepository) Cancel(ctx context.Context, id string) (Invoice, er
 	return r.FindByID(ctx, id)
 }
 
-// sellerInfo อ่านข้อมูลร้าน ร้านยังไม่มีเลขผู้เสียภาษี → ออกใบกำกับภาษีไม่ได้
+// sellerInfo อ่านข้อมูลร้าน + รูปแบบร้าน (ยังไม่ได้ตั้งค่าร้านเลย = ออกเอกสารไม่ได้)
 func sellerInfo(ctx context.Context, tx pgx.Tx) (seller, error) {
 	var s seller
-	err := tx.QueryRow(ctx, `SELECT name, address, tax_id, branch, phone FROM company WHERE id = 1`).
-		Scan(&s.name, &s.address, &s.taxID, &s.branch, &s.phone)
+	err := tx.QueryRow(ctx, `
+		SELECT name, address, tax_id, branch, phone, vat_registered, prices_include_vat
+		FROM company
+		WHERE id = 1`).
+		Scan(&s.name, &s.address, &s.taxID, &s.branch, &s.phone, &s.vatRegistered, &s.pricesIncludeVAT)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return seller{}, ErrSellerTaxIDMissing
 	}
-	if err != nil {
-		return seller{}, err
-	}
-	if s.taxID == "" {
-		return seller{}, ErrSellerTaxIDMissing
-	}
-	return s, nil
+	return s, err
 }
 
-// nextInvoiceNo เพิ่มเลขของปีนั้นทีละ 1 (ปีแรกเริ่มที่ 1) ใน transaction → กดพร้อมกันเลขก็ไม่ซ้ำ
-func nextInvoiceNo(ctx context.Context, tx pgx.Tx, issueDate string) (string, error) {
+// nextInvoiceNo เพิ่มเลขของชนิดเอกสาร + ปีนั้นทีละ 1 (ปีแรกเริ่มที่ 1) ใน transaction → กดพร้อมกันเลขก็ไม่ซ้ำ
+func nextInvoiceNo(ctx context.Context, tx pgx.Tx, docType, issueDate string) (string, error) {
 	var year, number int
 	err := tx.QueryRow(ctx, `
-		INSERT INTO invoice_numbers (year, last_number)
-		VALUES (EXTRACT(YEAR FROM $1::date)::int, 1)
-		ON CONFLICT (year) DO UPDATE SET last_number = invoice_numbers.last_number + 1, updated_at = now()
-		RETURNING year, last_number`, issueDate).Scan(&year, &number)
-	return invoiceNumber(year, number), err
+		INSERT INTO invoice_numbers (doc_type, year, last_number)
+		VALUES ($1, EXTRACT(YEAR FROM $2::date)::int, 1)
+		ON CONFLICT (doc_type, year) DO UPDATE SET last_number = invoice_numbers.last_number + 1, updated_at = now()
+		RETURNING year, last_number`, docType, issueDate).Scan(&year, &number)
+	return invoiceNumber(docPrefix(docType), year, number), err
 }
 
-// insertInvoice บันทึกหัวใบกำกับ คืน id ใบ และยอดรวมสุทธิ (ใช้บันทึกรายรับ)
-func insertInvoice(ctx context.Context, tx pgx.Tx, req InvoiceRequest, shop seller, invoiceNo string) (string, float64, error) {
-	subtotal, vat, total := totals(req.Items)
-
+// insertInvoice บันทึกหัวเอกสาร คืน id ใบ
+func insertInvoice(ctx context.Context, tx pgx.Tx, req InvoiceRequest, shop seller, docType, invoiceNo string, m money) (string, error) {
 	var id string
 	err := tx.QueryRow(ctx, `
-		INSERT INTO invoices (invoice_no, issue_date,
+		INSERT INTO invoices (doc_type, invoice_no, issue_date,
 			seller_name, seller_address, seller_tax_id, seller_branch, seller_phone,
 			customer_name, customer_address, customer_tax_id, customer_branch,
-			note, subtotal, vat, total)
-		VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			note, prices_include_vat, items_total, discount, subtotal, vat, total)
+		VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		RETURNING id`,
-		invoiceNo, req.IssueDate,
+		docType, invoiceNo, req.IssueDate,
 		shop.name, shop.address, shop.taxID, shop.branch, shop.phone,
 		req.CustomerName, req.CustomerAddress, req.CustomerTaxID, req.CustomerBranch,
-		req.Note, subtotal, vat, total).Scan(&id)
-	return id, total, err
+		req.Note, shop.pricesIncludeVAT && docType == docTaxInvoice, m.itemsTotal, m.discount, m.subtotal, m.vat, m.total).
+		Scan(&id)
+	return id, err
 }
 
-// addItem บันทึกสินค้า 1 บรรทัด: เก็บชื่อ / หน่วย ณ วันที่ออก + ตัด stock + บันทึกประวัติเบิกออก
+// addItem บันทึกสินค้า 1 บรรทัด: เก็บชื่อ / หน่วย ณ วันที่ออก
+// สินค้าที่นับสต็อก → ตัด stock + บันทึกประวัติเบิกออก / ไม่นับสต็อก (งานสั่งทำ / บริการ) → ไม่ตัด
 func addItem(ctx context.Context, tx pgx.Tx, invoiceID string, lineNo int, item ItemRequest) error {
 	var name, unit string
-	err := tx.QueryRow(ctx, `SELECT name, unit FROM products WHERE id = $1`, item.ProductID).Scan(&name, &unit)
+	var trackStock bool
+	err := tx.QueryRow(ctx, `SELECT name, unit, track_stock FROM products WHERE id = $1`, item.ProductID).
+		Scan(&name, &unit, &trackStock)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrProductNotFound
 	}
@@ -220,6 +232,22 @@ func addItem(ctx context.Context, tx pgx.Tx, invoiceID string, lineNo int, item 
 		return err
 	}
 
+	_, err = tx.Exec(ctx, `
+		INSERT INTO invoice_items (invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount, stock_cut)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		invoiceID, lineNo, item.ProductID, name, unit, item.Quantity, item.UnitPrice,
+		lineAmount(item.Quantity, item.UnitPrice), trackStock)
+	if err != nil {
+		return err
+	}
+	if !trackStock {
+		return nil
+	}
+	return cutStock(ctx, tx, invoiceID, item)
+}
+
+// cutStock ตัด stock ของสินค้า 1 บรรทัด + บันทึกประวัติเบิกออก
+func cutStock(ctx context.Context, tx pgx.Tx, invoiceID string, item ItemRequest) error {
 	// stock >= จำนวน → ถ้าของไม่พอ จะไม่มีแถวไหนถูกแก้
 	result, err := tx.Exec(ctx, `
 		UPDATE products SET stock = stock - $1, updated_at = now()
@@ -232,27 +260,19 @@ func addItem(ctx context.Context, tx pgx.Tx, invoiceID string, lineNo int, item 
 	}
 
 	_, err = tx.Exec(ctx, `
-		INSERT INTO invoice_items (invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		invoiceID, lineNo, item.ProductID, name, unit, item.Quantity, item.UnitPrice, lineAmount(item.Quantity, item.UnitPrice))
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(ctx, `
 		INSERT INTO stock_movements (product_id, type, quantity, invoice_id)
 		VALUES ($1, 'out', $2, $3)`, item.ProductID, item.Quantity, invoiceID)
 	return err
 }
 
-// itemTotals จำนวนรวมของแต่ละสินค้าในใบ (ใบเดียวอาจมีสินค้าเดียวกันหลายบรรทัด)
+// itemTotals จำนวนรวมของแต่ละสินค้าในใบที่เคยตัด stock (ใบเดียวอาจมีสินค้าเดียวกันหลายบรรทัด)
 const itemTotals = `
 	SELECT product_id, SUM(quantity) AS quantity
 	FROM invoice_items
-	WHERE invoice_id = $1
+	WHERE invoice_id = $1 AND stock_cut
 	GROUP BY product_id`
 
-// returnStock คืน stock ของทุกสินค้าในใบ + บันทึกประวัติรับเข้า สินค้าละ 1 แถว
+// returnStock คืน stock ของสินค้าในใบที่เคยตัดไป + บันทึกประวัติรับเข้า สินค้าละ 1 แถว
 func returnStock(ctx context.Context, tx pgx.Tx, invoiceID string) error {
 	_, err := tx.Exec(ctx, `
 		UPDATE products p SET stock = p.stock + i.quantity, updated_at = now()

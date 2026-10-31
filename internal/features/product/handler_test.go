@@ -48,7 +48,15 @@ func (f *fakeRepository) Create(ctx context.Context, req ProductRequest) (Produc
 	if f.err != nil {
 		return Product{}, f.err
 	}
-	p := Product{ID: "new-id", Name: req.Name, Unit: req.Unit, CostPrice: req.CostPrice, SellPrice: req.SellPrice, MinStock: req.MinStock, BatchQuantity: 1}
+	for _, p := range f.products {
+		if req.Code != "" && p.Code == req.Code {
+			return Product{}, ErrCodeTaken
+		}
+	}
+	p := Product{
+		ID: "new-id", Code: req.Code, Name: req.Name, Unit: req.Unit, CostPrice: req.CostPrice, SellPrice: req.SellPrice,
+		MinStock: req.MinStock, BatchQuantity: 1, TrackStock: req.trackStock(), CustomFields: req.customFields(),
+	}
 	f.products = append(f.products, p)
 	return p, nil
 }
@@ -60,6 +68,9 @@ func (f *fakeRepository) Update(ctx context.Context, id string, req ProductReque
 	}
 	p.Name = req.Name
 	p.SellPrice = req.SellPrice
+	if req.TrackStock != nil {
+		p.TrackStock = *req.TrackStock
+	}
 	return p, nil
 }
 
@@ -101,7 +112,7 @@ func checkError(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wa
 }
 
 func coffeeRepo() *fakeRepository {
-	return &fakeRepository{products: []Product{{ID: coffeeID, Name: "กาแฟ", Unit: "แก้ว", SellPrice: 45, BatchQuantity: 1}}}
+	return &fakeRepository{products: []Product{{ID: coffeeID, Code: "COF-01", Name: "กาแฟ", Unit: "แก้ว", SellPrice: 45, BatchQuantity: 1}}}
 }
 
 func TestHandler_RequiresLogin(t *testing.T) {
@@ -243,4 +254,37 @@ func TestHandler_Delete(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandler_Create_NewFields(t *testing.T) {
+	body := `{"name":"ค่าออกแบบโมเดล","code":"SV-01","category":"บริการ","track_stock":false,"custom_fields":{"f1":"งานด่วน"}}`
+	rec := sendRequest(newTestRouter(coffeeRepo()), http.MethodPost, "/api/v1/products", body)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, ต้องได้ %d (body: %s)", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var got Product
+	json.NewDecoder(rec.Body).Decode(&got)
+	if got.TrackStock || got.Code != "SV-01" || got.CustomFields["f1"] != "งานด่วน" {
+		t.Errorf("ได้ %+v, ต้องได้ track_stock false, code SV-01, custom_fields f1", got)
+	}
+}
+
+func TestHandler_Create_DefaultTrackStock(t *testing.T) {
+	rec := sendRequest(newTestRouter(coffeeRepo()), http.MethodPost, "/api/v1/products", `{"name":"ชาไทย"}`)
+
+	var got Product
+	json.NewDecoder(rec.Body).Decode(&got)
+	if !got.TrackStock {
+		t.Errorf("ไม่ส่ง track_stock มา ได้ %v, ต้องได้ true (นับสต็อก)", got.TrackStock)
+	}
+	if got.CustomFields == nil {
+		t.Errorf("ไม่ส่ง custom_fields มา ต้องได้ {} ไม่ใช่ null")
+	}
+}
+
+func TestHandler_Create_CodeTaken(t *testing.T) {
+	rec := sendRequest(newTestRouter(coffeeRepo()), http.MethodPost, "/api/v1/products", `{"name":"กาแฟร้อน","code":"COF-01"}`)
+
+	checkError(t, rec, http.StatusConflict, "product_code_taken")
 }

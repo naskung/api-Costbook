@@ -23,3 +23,24 @@ func TestVAT(t *testing.T) {
 		})
 	}
 }
+
+func TestPriceBeforeVAT(t *testing.T) {
+	tests := []struct {
+		name  string
+		total float64
+		want  float64
+	}{
+		{"107 บาท ถอด VAT ได้ 100 บาท", 107, 100},
+		{"10 บาท (ราคาป้ายรวม VAT) ได้ 9.35 บาท", 10, 9.35},
+		{"0 บาท ได้ 0", 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := PriceBeforeVAT(tt.total)
+			if got != tt.want {
+				t.Errorf("PriceBeforeVAT(%v) = %v, ต้องได้ %v", tt.total, got, tt.want)
+			}
+		})
+	}
+}

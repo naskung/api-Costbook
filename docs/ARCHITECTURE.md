@@ -79,7 +79,7 @@ api-Costbook/
 │   ├── router/               สร้าง Gin router + รวม route ทั้งหมดไว้ที่เดียว
 │   ├── middleware/           ทำงานก่อนทุก request: cors, auth (logger มากับ gin.Default() แล้ว)
 │   ├── helpers/              ช่วยงาน HTTP: WriteError, ServerError, MonthStart (?month=), UUIDParam (:id) (ตอบสำเร็จใช้ c.JSON ของ Gin)
-│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT), cost (CostPerUnit), date (IsDate), check (IsUUID, IsTaxID), token (JWT)
+│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), cost (CostPerUnit), date (IsDate), check (IsUUID, IsTaxID), token (JWT)
 │   └── features/
 │       ├── auth/             login + ข้อมูลผู้ใช้ที่ login อยู่ (ตาราง users)
 │       ├── company/          ข้อมูลร้าน + โลโก้ (ตาราง company มีแถวเดียว)
@@ -91,10 +91,11 @@ api-Costbook/
 │       │   ├── handler_test.go    test ด้วย fakeRepository (ไม่ต้องมี DB)
 │       │   ├── logic.go           (ถ้ามี) คำนวณเฉพาะ feature นี้
 │       │   └── logic_test.go
-│       ├── cost/             ใบต้นทุนของสินค้า (ตาราง product_costs) → คำนวณ cost_price
-│       ├── stock/            คงเหลือ / รับเข้า / เบิกออก (ตาราง stock_movements)
+│       ├── field/            ช่องข้อมูลเพิ่มเติมของสินค้าที่ร้านตั้งเอง (ตาราง product_fields)
+│       ├── cost/             ใบต้นทุนของสินค้า (ตาราง product_costs) → คำนวณ cost_price + รายการที่ใช้บ่อย (cost_presets)
+│       ├── stock/            คงเหลือ / รับเข้า (คิดต้นทุนเฉลี่ย) / เบิกออก (ตาราง stock_movements)
 │       ├── transaction/      รายรับ-รายจ่าย + สรุปรายเดือน
-│       ├── invoice/          ใบกำกับภาษี: ออกใบ (รันเลข + ตัด stock + บันทึกรายรับ) / ยกเลิก
+│       ├── invoice/          เอกสารขาย (ใบกำกับภาษี / ใบเสร็จ): ออกใบ (รันเลข + ตัด stock + บันทึกรายรับ) / ยกเลิก
 │       └── dashboard/        ตัวเลขสรุปหน้าแรก (อ่านอย่างเดียว ไม่มีตารางของตัวเอง)
 ├── migrations/               ไฟล์ SQL สร้าง / แก้ตาราง เช่น 000001_create_users.up.sql / .down.sql
 ├── sql/                      คำสั่ง SQL ไว้ copy ไปรันเองใน DBeaver (select / insert / update / delete) 1 ไฟล์ต่อ 1 ตาราง — API ไม่ได้ใช้
@@ -192,8 +193,16 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `POST /api/v1/products` | เพิ่มสินค้า |
 | | `PUT /api/v1/products/{id}` | แก้สินค้า |
 | | `DELETE /api/v1/products/{id}` | ลบสินค้า |
+| field ✅ | `GET /api/v1/product-fields` | ช่องข้อมูลเพิ่มเติมของสินค้าที่ร้านตั้งเอง (เช่น วัสดุ สี ขนาด) |
+| | `POST /api/v1/product-fields` | เพิ่มช่อง |
+| | `PUT /api/v1/product-fields/{id}` | แก้ช่อง |
+| | `DELETE /api/v1/product-fields/{id}` | ลบช่อง (ค่าของช่องนี้ในทุกสินค้าหายไปด้วย) |
 | cost ✅ | `GET /api/v1/products/{id}/costs` | ใบต้นทุน: รายการต้นทุน (วัตถุดิบ / ค่าแรง / ค่าใช้จ่ายอื่น) + จำนวนผลิตต่อรอบ + ต้นทุน / ราคาขายต่อชิ้น |
 | | `PUT /api/v1/products/{id}/costs` | บันทึกทั้งใบ (แทนที่รายการเดิมทั้งหมด) → คำนวณ `cost_price` ใหม่ + บันทึก `sell_price` |
+| | `GET /api/v1/cost-presets` | รายการต้นทุนที่ใช้บ่อย (เช่น เส้น PLA กรัมละ 0.45) ไว้เลือกใส่ใบต้นทุนเร็ว ๆ |
+| | `POST /api/v1/cost-presets` | เพิ่มรายการที่ใช้บ่อย |
+| | `PUT /api/v1/cost-presets/{id}` | แก้ |
+| | `DELETE /api/v1/cost-presets/{id}` | ลบ |
 | stock ✅ | `GET /api/v1/stock?low=true` | จำนวนคงเหลือ (`low=true` = เฉพาะใกล้หมด) |
 | | `GET /api/v1/stock/movements?product_id=` | ประวัติรับเข้า / เบิกออก |
 | | `POST /api/v1/stock/in` | รับสินค้าเข้า |
@@ -203,10 +212,10 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `POST /api/v1/transactions` | เพิ่มรายการ |
 | | `PUT /api/v1/transactions/{id}` | แก้รายการ |
 | | `DELETE /api/v1/transactions/{id}` | ลบรายการ |
-| invoice ✅ | `GET /api/v1/invoices?month=2026-10` | รายการใบกำกับภาษีของเดือน |
-| | `GET /api/v1/invoices/{id}` | ใบกำกับ 1 ใบ (Flutter เอาไปสร้าง PDF) |
-| | `POST /api/v1/invoices` | ออกใบกำกับ |
-| | `POST /api/v1/invoices/{id}/cancel` | ยกเลิกใบกำกับ |
+| invoice ✅ | `GET /api/v1/invoices?month=2026-10` | เอกสารขายของเดือน (ใบกำกับภาษี + ใบเสร็จรับเงิน) |
+| | `GET /api/v1/invoices/{id}` | เอกสาร 1 ใบ (Flutter เอาไปสร้าง PDF) |
+| | `POST /api/v1/invoices` | ออกเอกสารขาย — ร้านจด VAT ได้ใบกำกับภาษี ไม่จด ได้ใบเสร็จ |
+| | `POST /api/v1/invoices/{id}/cancel` | ยกเลิกเอกสาร |
 | dashboard ✅ | `GET /api/v1/dashboard?month=2026-10` | ตัวเลขสรุปหน้าแรก |
 | auth ✅ | `POST /api/v1/auth/login` | login ได้ token |
 | | `GET /api/v1/auth/me` | ข้อมูลผู้ใช้ที่ login อยู่ (ต้องส่ง token) |
@@ -246,17 +255,27 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 
 - สินค้าใหม่ `stock = 0` — เพิ่มของผ่าน `POST /stock/in` เท่านั้น (`PUT /products/{id}` แก้ stock ไม่ได้)
 - ลบสินค้าที่เคยอยู่ในใบกำกับไม่ได้ → 409 `product_in_use` / ลบได้ → รายการต้นทุนและประวัติ stock หายไปด้วย
-- ใบต้นทุน `PUT /products/{id}/costs` ส่ง `{ "batch_quantity", "sell_price", "items": [{ "type", "name", "amount" }] }` ทั้งใบ
-  → `cost_price = utils.CostPerUnit(วัตถุดิบ, ค่าแรง, ค่าใช้จ่ายอื่น, batch_quantity)` บันทึกลงสินค้า รายการเรียงตามประเภท แล้วตามลำดับที่กรอก (`line_no`)
-- รับเข้า / เบิกออก `{ "product_id", "quantity", "note" }` ใช้ SQL `stock = stock + $1 WHERE stock + $1 >= 0` → เบิกเกินที่มีได้ 409 `stock_not_enough`
+- สินค้ามี `code` (รหัส / บาร์โค้ด ว่างได้ ถ้าใส่ห้ามซ้ำ → 409 `product_code_taken`), `category`, `description`, `track_stock`, `custom_fields`
+- `track_stock = false` (งานบริการ / งานสั่งทำ) → ไม่โชว์ในหน้าสต็อก ไม่เตือนใกล้หมด ขายได้ไม่จำกัด รับเข้า / เบิกออกไม่ได้ (409 `stock_not_tracked`)
+- `PUT /products/{id}` **ไม่ส่ง** `track_stock` / `custom_fields` มา = ใช้ค่าเดิม (SQL `COALESCE($n, column)`) — แอปเก่าที่ไม่รู้จัก field ใหม่จะไม่ล้างค่าทิ้ง
+- ใบต้นทุน `PUT /products/{id}/costs` ส่ง `{ "batch_quantity", "sell_price", "items": [...] }` ทั้งใบ แต่ละบรรทัดมี 2 แบบ (`kind`)
+  - `fixed` = `quantity × unit_price` เช่น เส้น PLA 160 กรัม × 0.45 = 72
+  - `percent` = `percent`% ของผลรวมบรรทัดแบบ `fixed` ทั้งใบ เช่น เผื่อพิมพ์เสีย 10% (0–1000 ไม่งั้น 400 `cost_percent_invalid`)
+  - API คิด `amount` ของทุกบรรทัดเอง (`cost/logic.go`) แล้ว `cost_price = ผลรวม ÷ batch_quantity` บันทึกลงสินค้า รายการเรียงตามประเภท แล้วตามลำดับที่กรอก (`line_no`)
+- รายการที่ใช้บ่อย (`cost_presets`) = แม่แบบบรรทัดต้นทุน `{ "type", "kind", "name", "unit", "unit_price", "percent" }` ไม่เกี่ยวกับสินค้าตัวไหน
+- รับเข้า / เบิกออก `{ "product_id", "quantity", "note", "unit_cost", "supplier" }` ใช้ SQL `stock = stock + $1 WHERE stock + $1 >= 0` → เบิกเกินที่มีได้ 409 `stock_not_enough`
+- รับเข้าแล้วใส่ `unit_cost` > 0 → `cost_price` ของสินค้า = ต้นทุนเฉลี่ย `(ของเดิม × ทุนเดิม + ของใหม่ × ทุนใหม่) ÷ จำนวนรวม` (ร้านซื้อมาขายไป ไม่ต้องใช้หน้าคำนวณต้นทุน) — ล็อกแถวสินค้าด้วย `SELECT ... FOR UPDATE` กันรับเข้าพร้อมกันแล้วคิดผิด
 - ประวัติที่มี `invoice_no` = เกิดจากใบกำกับ (out = ออกใบ, in = ยกเลิกใบ)
 
 ### รายละเอียด transaction / invoice / dashboard (ทำแล้ว)
 
 - `category` เป็นรหัสหมวด (Flutter แปลเป็นชื่อ) — API เช็คแค่ว่าห้ามว่าง รายรับจากใบกำกับใช้ `sales`
 - รายการที่มี `invoice_id` (รายรับจากใบกำกับ) แก้ / ลบไม่ได้ → 409 `transaction_from_invoice` ต้องยกเลิกใบกำกับแทน
-- ออกใบกำกับ: ร้านต้องมีเลขผู้เสียภาษีก่อน (409 `company_tax_id_required`), `unit_price` = ราคาก่อน VAT, ตอบใบเต็ม (เหมือน `GET /invoices/{id}`)
-- ยกเลิกใบกำกับ: ได้ใบที่ `status = cancelled`, ยกเลิกซ้ำได้ 409 `invoice_already_cancelled`
+- ชนิดเอกสาร (`doc_type`) ดูจาก `company.vat_registered` ตอนออก: จด VAT → `tax_invoice` (`INV-2026-0001`), ไม่จด → `receipt` ใบเสร็จรับเงิน (`RC-2026-0001`) ไม่มี VAT
+- ใบกำกับภาษี: ร้านต้องมีเลขผู้เสียภาษีก่อน (409 `company_tax_id_required`) และต้องมีชื่อลูกค้า (400 `invoice_customer_required`) / ใบเสร็จ: ไม่ต้องมีทั้งสองอย่าง (ไม่ใส่ชื่อ = ลูกค้าทั่วไป)
+- `discount` = ส่วนลดทั้งบิล (0 ถึงยอดรวมสินค้า ไม่งั้น 400 `invoice_discount_invalid`) — `unit_price` รวม VAT หรือไม่ ดูจาก `company.prices_include_vat` (เก็บค่านี้ไว้ในใบด้วย)
+- ตอบใบเต็ม (เหมือน `GET /invoices/{id}`): `items_total`, `discount`, `subtotal` (มูลค่าก่อน VAT), `vat`, `total`
+- ยกเลิกเอกสาร: ได้ใบที่ `status = cancelled`, ยกเลิกซ้ำได้ 409 `invoice_already_cancelled`
 - dashboard: รายรับ / รายจ่าย / กำไรของเดือน, จำนวน + ยอดใบกำกับที่ยังไม่ยกเลิก, จำนวนสินค้า, สินค้าใกล้หมด (ไม่เกิน 5 ตัว เหลือน้อยสุดก่อน)
 
 ### รายละเอียด company (ทำแล้ว)
@@ -270,19 +289,38 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 - ดูข้อมูลร้าน / โลโก้ไม่ต้อง login เพื่อให้หน้า login แสดงชื่อ + โลโก้ร้านได้
 - โลโก้ตอบ header `Cache-Control: no-cache` — Flutter ที่เพิ่งอัปโหลดโลโก้ใหม่ต้องโหลดรูปใหม่เอง (ล้าง cache ของ `Image.network`)
 
+### รายละเอียด รูปแบบร้าน + ช่องข้อมูลเพิ่มเติม (ทำแล้ว)
+
+ร้านแต่ละแบบคิดเงิน / ต้นทุน / ข้อมูลสินค้าไม่เหมือนกัน → ตั้งค่าได้เอง ไม่ต้องแก้โค้ด
+
+| ตั้งค่า (ใน `company`) | ค่าเริ่มต้น | ผล |
+|---|---|---|
+| `vat_registered` | `true` | `true` ออกใบกำกับภาษี คิด VAT 7% / `false` ออกใบเสร็จรับเงิน ไม่คิด VAT ไม่ต้องมีเลขผู้เสียภาษี |
+| `prices_include_vat` | `false` | `true` = ราคาขายที่ตั้งไว้รวม VAT แล้ว (ราคาหน้าร้าน) → ถอด VAT ออกจากยอด / `false` = บวก VAT เพิ่มจากราคา |
+| `use_cost_page` | `true` | Flutter ซ่อนเมนูคำนวณต้นทุน (ร้านซื้อมาขายไปใช้ `unit_cost` ตอนรับเข้าแทน) — API ไม่ได้ใช้ค่านี้ |
+
+- `PUT /company` **ไม่ส่ง** 3 ช่องนี้มา = ใช้ค่าเดิม (Go ใช้ `*bool`, `nil` → SQL `COALESCE($n, column)`)
+- ช่องข้อมูลเพิ่มเติม (`/product-fields`): `{ "name", "type", "options", "show_in_list", "sort_order" }`
+  - `type` = `text` / `number` / `date` / `select` (`select` ต้องมี `options` ไม่งั้น 400 `field_options_required`)
+  - ค่าของแต่ละสินค้าเก็บใน `products.custom_fields` (JSONB) แบบ `{"<id ช่อง>": "ค่า"}` — **ไม่ต้อง ALTER TABLE** เพิ่ม column ทุกครั้งที่ร้านอยากได้ช่องใหม่
+  - ลบช่อง → ลบ key นั้นออกจากทุกสินค้าใน transaction เดียว (SQL `custom_fields - $1::text`)
+  - `show_in_list = true` → Flutter โชว์เป็น column ในตารางสินค้า
+
 ---
 
 ## 8. ตารางในฐานข้อมูล
 
 | ตาราง | เก็บอะไร | column หลัก |
 |---|---|---|
-| `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type |
-| `products` | สินค้า (migration `000003_create_products`) | id, name, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0) |
-| `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), name, amount |
-| `invoices` | ใบกำกับภาษี (`000004_create_invoices`) | id, invoice_no (ห้ามซ้ำ), issue_date, status (issued / cancelled), seller_* + customer_* ณ วันที่ออก, note, subtotal, vat, total, cancelled_at |
-| `invoice_items` | รายการในใบกำกับ (`000004`, สินค้าที่อยู่ในนี้ลบไม่ได้) | id, invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount |
-| `invoice_numbers` | ตัวรันเลขที่ใบกำกับ (`000004`) | year, last_number |
-| `stock_movements` | ประวัติรับเข้า / เบิกออก (`000005_create_stock_movements`) | id, product_id, type (in / out), quantity, note, invoice_id, created_at |
+| `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type, vat_registered, prices_include_vat, use_cost_page (`000007`) |
+| `products` | สินค้า (migration `000003_create_products`) | id, code (ห้ามซ้ำถ้าไม่ว่าง), name, category, description, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0), track_stock, custom_fields (`JSONB`) |
+| `product_fields` | ช่องข้อมูลเพิ่มเติมที่ร้านตั้งเอง (`000007_flexible_shop`) | id, name, type (text / number / date / select), options (`TEXT[]`), show_in_list, sort_order |
+| `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), kind (fixed / percent), name, quantity, unit, unit_price, percent, amount |
+| `cost_presets` | รายการต้นทุนที่ใช้บ่อย (`000007`) | id, type, kind, name, unit, unit_price, percent |
+| `invoices` | เอกสารขาย (`000004_create_invoices`) | id, doc_type (tax_invoice / receipt), invoice_no (ห้ามซ้ำ), issue_date, status (issued / cancelled), seller_* + customer_* ณ วันที่ออก, note, prices_include_vat, items_total, discount, subtotal, vat, total, cancelled_at |
+| `invoice_items` | รายการในเอกสาร (`000004`, สินค้าที่อยู่ในนี้ลบไม่ได้) | id, invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount, stock_cut (ตัด stock ไปไหม → ยกเลิกใบคืนเฉพาะที่ตัด) |
+| `invoice_numbers` | ตัวรันเลขที่ (`000004`) | doc_type + year (คู่กันเป็น key), last_number |
+| `stock_movements` | ประวัติรับเข้า / เบิกออก (`000005_create_stock_movements`) | id, product_id, type (in / out), quantity, note, unit_cost, supplier, invoice_id, created_at |
 | `transactions` | รายรับ-รายจ่าย (`000006_create_transactions`) | id, type (income / expense), category, amount (> 0), date, note, invoice_id (ห้ามซ้ำ) |
 | `users` | ผู้ใช้ที่ login ได้ (migration `000001_create_users`) | id, email (ห้ามซ้ำ), password_hash (bcrypt), first_name, last_name |
 
@@ -493,9 +531,9 @@ productHandler.RegisterRoutes(api)
 
 | เรื่อง | กฎ |
 |---|---|
-| คำนวณ VAT | คิดจากยอดรวมก่อน VAT **ทั้งใบ** (`utils.VAT(subtotal)`) ไม่คิดทีละบรรทัด |
-| ตัด stock | `UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1` ถ้าไม่มีแถวไหนถูกแก้ = stock ไม่พอ → 409 `stock_not_enough` |
-| เลขที่ใบกำกับ | ค่าเริ่มต้น `INV-2026-0001` รันใหม่ทุกปี ใช้ `UPDATE invoice_numbers SET last_number = last_number + 1 WHERE year = $1 RETURNING last_number` ใน transaction → เลขไม่ซ้ำแม้กดพร้อมกัน |
+| คำนวณ VAT | คิด **ทั้งใบ** หลังหักส่วนลด ไม่คิดทีละบรรทัด (`invoice/logic.go` → `documentAmounts`): ราคาไม่รวม VAT → `vat = utils.VAT(ยอดหลังลด)` / ราคารวม VAT แล้ว → `subtotal = utils.PriceBeforeVAT(ยอดหลังลด)`, `vat = ยอด − subtotal` / ใบเสร็จ → `vat = 0` |
+| ตัด stock | เฉพาะสินค้าที่ `track_stock = true`: `UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1` ถ้าไม่มีแถวไหนถูกแก้ = stock ไม่พอ → 409 `stock_not_enough` |
+| เลขที่เอกสาร | `INV-2026-0001` (ใบกำกับ) / `RC-2026-0001` (ใบเสร็จ) แยกเลขกัน รันใหม่ทุกปี ใช้ `INSERT ... ON CONFLICT (doc_type, year) DO UPDATE SET last_number = last_number + 1 RETURNING last_number` ใน transaction → เลขไม่ซ้ำแม้กดพร้อมกัน |
 | แก้ / ลบใบกำกับ | **ห้าม** ถ้าผิดให้ยกเลิก (`status = cancelled`) แล้วออกใบใหม่ |
 | ยกเลิกใบกำกับ | คืน stock + ลบรายรับที่ผูกกับใบนั้น (ทำใน transaction เดียว) |
 | ข้อมูลในใบ | เก็บชื่อ ที่อยู่ เลขผู้เสียภาษี ของผู้ขาย / ผู้ซื้อ และชื่อสินค้า **ณ วันที่ออก** ไว้ในใบเลย แก้ข้อมูลบริษัทหรือสินค้าภายหลัง ใบเก่าต้องไม่เปลี่ยน — **ยกเว้นโลโก้** ไม่เก็บซ้ำในใบ (กฎหมายไม่บังคับ + DB จะบวม) พิมพ์ใบเก่าซ้ำจะได้โลโก้ปัจจุบัน |

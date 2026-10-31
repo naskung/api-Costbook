@@ -39,7 +39,7 @@
 
 ## Phase 2 — ฐานข้อมูล (รอคำสั่ง)
 
-- [ ] ติดตั้ง PostgreSQL + สร้าง database `costbook`
+- [x] ติดตั้ง PostgreSQL + สร้าง database `costbook`
 - [ ] ติดตั้ง `golang-migrate`
 - [ ] เพิ่ม package `pgx/v5`
 - [ ] `internal/database/postgres.go` เชื่อมต่อ DB
@@ -91,6 +91,7 @@
 
 | วันที่ | ทำอะไร | หมายเหตุ |
 |---|---|---|
+| 2026-10-31 | ผู้ใช้ติดตั้ง PostgreSQL 17.11 (Homebrew) เปิด service และสร้าง database `costbook` แล้ว | ยังไม่ได้ลง `golang-migrate` |
 | 2026-10-31 | เปลี่ยนจาก `net/http` เป็น **Gin**: แก้ `docs/ARCHITECTURE.md`, `CLAUDE.md`, skill `simple-code` / `unit-test-check` และแผน Phase 1 (ตัด `WriteJSON` ใช้ `c.JSON` แทน, เพิ่ม `RegisterRoutes`, `NoRoute`) และ Phase 4 (ตัด `middleware/logger.go` เพราะ `gin.Default()` มี logger แล้ว) | ยังไม่ได้เพิ่ม package / ยังไม่มีโค้ด — ไม่กระทบ Flutter (path และ JSON เหมือนเดิม) |
 | 2026-10-31 | ลบโค้ด Go ทั้งหมดออก (main, config, router, health, CORS, helpers, utils และ test) เหลือแค่เอกสาร + โครงโฟลเดอร์เปล่า | ผู้ใช้จะสั่งทำ API ทีละส่วนเอง |
 | 2026-10-31 | สร้างเอกสาร + skill และโครงโปรเจกต์ Go: config, router, health, CORS, helpers, utils พร้อม unit test | ภายหลังลบโค้ดออก (ดูบรรทัดบน) |

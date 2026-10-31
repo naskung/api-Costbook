@@ -15,6 +15,9 @@ var ErrNotFound = errors.New("product not found")
 // ErrInUse สินค้าเคยอยู่ในใบกำกับแล้ว ลบไม่ได้ (handler จะตอบ 409)
 var ErrInUse = errors.New("product is used in an invoice")
 
+// ErrImageNotFound สินค้ายังไม่มีรูป (handler จะตอบ 404)
+var ErrImageNotFound = errors.New("product image not found")
+
 // ErrCodeTaken รหัส / บาร์โค้ดซ้ำกับสินค้าตัวอื่น (handler จะตอบ 409)
 var ErrCodeTaken = errors.New("product code is already used")
 
@@ -29,6 +32,9 @@ type Repository interface {
 	Create(ctx context.Context, req ProductRequest) (Product, error)
 	Update(ctx context.Context, id string, req ProductRequest) (Product, error)
 	Delete(ctx context.Context, id string) error
+	FindImage(ctx context.Context, id string) (Image, error)
+	SaveImage(ctx context.Context, id string, image Image) (Product, error)
+	DeleteImage(ctx context.Context, id string) (Product, error)
 }
 
 type PostgresRepository struct {
@@ -41,7 +47,7 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 
 // productColumns column ที่ใช้อ่านสินค้า เรียงตรงกับ scanProduct
 const productColumns = `id, code, name, category, description, unit, cost_price, sell_price,
-	stock, min_stock, batch_quantity, track_stock, custom_fields`
+	stock, min_stock, batch_quantity, track_stock, custom_fields, image_version`
 
 func (r *PostgresRepository) List(ctx context.Context) ([]Product, error) {
 	rows, err := r.db.Query(ctx, `SELECT `+productColumns+` FROM products ORDER BY name`)
@@ -111,11 +117,49 @@ func (r *PostgresRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// FindImage อ่านรูปของสินค้า (ไม่มีสินค้า = ErrNotFound, มีสินค้าแต่ไม่มีรูป = ErrImageNotFound)
+func (r *PostgresRepository) FindImage(ctx context.Context, id string) (Image, error) {
+	var image Image
+	err := r.db.QueryRow(ctx, `SELECT image, image_content_type FROM products WHERE id = $1`, id).
+		Scan(&image.Data, &image.ContentType)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Image{}, ErrNotFound
+	}
+	if err != nil {
+		return Image{}, err
+	}
+	if len(image.Data) == 0 {
+		return Image{}, ErrImageNotFound
+	}
+	return image, nil
+}
+
+// SaveImage เก็บรูปใหม่ทับรูปเดิม + ตั้ง image_version เป็นเวลาตอนนี้ (มิลลิวินาที)
+func (r *PostgresRepository) SaveImage(ctx context.Context, id string, image Image) (Product, error) {
+	row := r.db.QueryRow(ctx, `
+		UPDATE products
+		SET image = $2, image_content_type = $3,
+			image_version = (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT, updated_at = now()
+		WHERE id = $1
+		RETURNING `+productColumns, id, image.Data, image.ContentType)
+	return scanProduct(row)
+}
+
+// DeleteImage ลบรูปของสินค้า (image_version กลับเป็น 0)
+func (r *PostgresRepository) DeleteImage(ctx context.Context, id string) (Product, error) {
+	row := r.db.QueryRow(ctx, `
+		UPDATE products
+		SET image = NULL, image_content_type = '', image_version = 0, updated_at = now()
+		WHERE id = $1
+		RETURNING `+productColumns, id)
+	return scanProduct(row)
+}
+
 // scanProduct อ่านผลจาก SELECT / RETURNING ใส่ Product
 func scanProduct(row pgx.Row) (Product, error) {
 	var p Product
 	err := row.Scan(&p.ID, &p.Code, &p.Name, &p.Category, &p.Description, &p.Unit, &p.CostPrice, &p.SellPrice,
-		&p.Stock, &p.MinStock, &p.BatchQuantity, &p.TrackStock, &p.CustomFields)
+		&p.Stock, &p.MinStock, &p.BatchQuantity, &p.TrackStock, &p.CustomFields, &p.ImageVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Product{}, ErrNotFound
 	}

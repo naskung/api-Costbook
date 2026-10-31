@@ -79,8 +79,8 @@ api-Costbook/
 │   ├── database/             เชื่อมต่อ PostgreSQL (Phase 2)
 │   ├── router/               สร้าง Gin router + รวม route ทั้งหมดไว้ที่เดียว
 │   ├── middleware/           ทำงานก่อนทุก request: cors, auth (logger มากับ gin.Default() แล้ว)
-│   ├── helpers/              ช่วยงาน HTTP: WriteError, ServerError, MonthStart (?month=), UUIDParam (:id) (ตอบสำเร็จใช้ c.JSON ของ Gin)
-│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), cost (CostPerUnit), date (IsDate), check (IsUUID, IsTaxID), token (JWT)
+│   ├── helpers/              ช่วยงาน HTTP: WriteError, ServerError, MonthStart (?month=), UUIDParam (:id), ReadImage (อ่านรูปที่อัปโหลด) (ตอบสำเร็จใช้ c.JSON ของ Gin)
+│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), cost (CostPerUnit), date (IsDate), check (IsUUID, IsTaxID), token (JWT), image (ImageContentType), secret (Encrypt / Decrypt)
 │   └── features/
 │       ├── auth/             login + ข้อมูลผู้ใช้ที่ login อยู่ (ตาราง users)
 │       ├── company/          ข้อมูลร้าน + โลโก้ (ตาราง company มีแถวเดียว)
@@ -167,9 +167,9 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 | status error | เมื่อไหร่ | ตัวอย่าง code |
 |---|---|---|
-| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `month_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid`, `ai_key_format_invalid`, `ai_key_invalid` (ตอนบันทึก key แล้ว Anthropic ไม่รับ) |
+| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `month_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid`, `product_image_required`, `product_image_too_large`, `product_image_type_invalid`, `ai_key_format_invalid`, `ai_key_invalid` (ตอนบันทึก key แล้ว Anthropic ไม่รับ) |
 | 401 | ยังไม่ login / token ผิดหรือหมดอายุ / login ไม่ผ่าน | `unauthorized`, `invalid_credentials` |
-| 404 | ไม่เจอข้อมูล / ไม่มี path นี้ / id ไม่ใช่ UUID | `product_not_found`, `transaction_not_found`, `invoice_not_found`, `logo_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
+| 404 | ไม่เจอข้อมูล / ไม่มี path นี้ / id ไม่ใช่ UUID | `product_not_found`, `transaction_not_found`, `invoice_not_found`, `logo_not_found`, `product_image_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
 | 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled`, `company_tax_id_required`, `ai_search_unavailable` (AI ฟรีค้นเว็บไม่ได้ → เช็คราคาตลาดไม่ได้) |
 | 422 | AI ปฏิเสธคำขอ (นโยบายความปลอดภัย) | `ai_refused` |
 | 500 | server พัง | `server_error` (ใช้ `helpers.ServerError` → error จริงลง log ไม่ส่งให้ client) |
@@ -199,6 +199,9 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `POST /api/v1/products` | เพิ่มสินค้า |
 | | `PUT /api/v1/products/{id}` | แก้สินค้า |
 | | `DELETE /api/v1/products/{id}` | ลบสินค้า |
+| | `GET /api/v1/products/{id}/image?v=<image_version>` | รูปสินค้า (ตอบเป็นรูป, ต้อง login) |
+| | `PUT /api/v1/products/{id}/image` | อัปโหลดรูปสินค้า (multipart ช่อง `image`, PNG / JPG / WebP ไม่เกิน 1 MB) → ได้สินค้าที่มี `image_version` ใหม่ |
+| | `DELETE /api/v1/products/{id}/image` | ลบรูปสินค้า → ได้สินค้าที่ `image_version = 0` |
 | field ✅ | `GET /api/v1/product-fields` | ช่องข้อมูลเพิ่มเติมของสินค้าที่ร้านตั้งเอง (เช่น วัสดุ สี ขนาด) |
 | | `POST /api/v1/product-fields` | เพิ่มช่อง |
 | | `PUT /api/v1/product-fields/{id}` | แก้ช่อง |
@@ -269,6 +272,9 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 - ลบสินค้าที่เคยอยู่ในใบกำกับไม่ได้ → 409 `product_in_use` / ลบได้ → รายการต้นทุนและประวัติ stock หายไปด้วย
 - สินค้ามี `code` (รหัส / บาร์โค้ด ว่างได้ ถ้าใส่ห้ามซ้ำ → 409 `product_code_taken`), `category`, `description`, `track_stock`, `custom_fields`
 - `track_stock = false` (งานบริการ / งานสั่งทำ) → ไม่โชว์ในหน้าสต็อก ไม่เตือนใกล้หมด ขายได้ไม่จำกัด รับเข้า / เบิกออกไม่ได้ (409 `stock_not_tracked`)
+- **รูปสินค้า** 1 รูป (`000010_product_image`): เก็บใน DB แบบเดียวกับโลโก้ (ตรวจไฟล์ด้วย `helpers.ReadImage` ตัวเดียวกัน) / `image_version` = เวลาที่เปลี่ยนรูปล่าสุด (มิลลิวินาที, 0 = ไม่มีรูป) — `GET /products` ไม่ส่งตัวรูปมา ส่งแค่ `image_version`
+  - Flutter โหลดรูปที่ `/products/{id}/image?v=<image_version>` พร้อม token → เปลี่ยนรูปแล้ว URL เปลี่ยน จึงให้ browser เก็บรูปไว้ได้นาน (`Cache-Control: private, max-age=31536000, immutable`)
+  - เปลี่ยนรูปผ่าน `PUT` / `DELETE /products/{id}/image` เท่านั้น (`PUT /products/{id}` ไม่แตะรูป)
 - `PUT /products/{id}` **ไม่ส่ง** `track_stock` / `custom_fields` มา = ใช้ค่าเดิม (SQL `COALESCE($n, column)`) — แอปเก่าที่ไม่รู้จัก field ใหม่จะไม่ล้างค่าทิ้ง
 - ใบต้นทุน `PUT /products/{id}/costs` ส่ง `{ "batch_quantity", "sell_price", "items": [...] }` ทั้งใบ แต่ละบรรทัดมี 2 แบบ (`kind`)
   - `fixed` = `quantity × unit_price` เช่น เส้น PLA 160 กรัม × 0.45 = 72
@@ -383,7 +389,7 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | ตาราง | เก็บอะไร | column หลัก |
 |---|---|---|
 | `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type, vat_registered, prices_include_vat, use_cost_page (`000007`), ai_key (key ของ Claude แบบเข้ารหัส ว่าง = ไม่มี `000009_ai_key`) |
-| `products` | สินค้า (migration `000003_create_products`) | id, code (ห้ามซ้ำถ้าไม่ว่าง), name, category, description, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0), track_stock, custom_fields (`JSONB`) |
+| `products` | สินค้า (migration `000003_create_products`) | id, code (ห้ามซ้ำถ้าไม่ว่าง), name, category, description, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0), track_stock, custom_fields (`JSONB`), image (`BYTEA` ว่างได้) + image_content_type + image_version (`000010`) |
 | `product_fields` | ช่องข้อมูลเพิ่มเติมที่ร้านตั้งเอง (`000007_flexible_shop`) | id, name, type (text / number / date / select), options (`TEXT[]`), show_in_list, sort_order |
 | `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), kind (fixed / percent), name, quantity, unit, unit_price, percent, amount |
 | `cost_presets` | รายการต้นทุนที่ใช้บ่อย (`000007`) | id, type, kind, name, unit, unit_price, percent |

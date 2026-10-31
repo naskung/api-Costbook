@@ -23,6 +23,9 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 	api.POST("/products", authRequired, h.Create)
 	api.PUT("/products/:id", authRequired, h.Update)
 	api.DELETE("/products/:id", authRequired, h.Delete)
+	api.GET("/products/:id/image", authRequired, h.Image)
+	api.PUT("/products/:id/image", authRequired, h.UploadImage)
+	api.DELETE("/products/:id/image", authRequired, h.DeleteImage)
 }
 
 // List GET /api/v1/products
@@ -138,4 +141,72 @@ func readRequest(c *gin.Context) (ProductRequest, bool) {
 		return req, false
 	}
 	return req, true
+}
+
+// Image GET /api/v1/products/:id/image — ตอบเป็นรูปตรง ๆ
+// URL มี ?v=<image_version> เปลี่ยนรูปแล้ว URL เปลี่ยน → ให้ browser เก็บรูปไว้ได้นาน ไม่ต้องโหลดซ้ำ
+func (h *Handler) Image(c *gin.Context) {
+	id, ok := helpers.UUIDParam(c, "id", "product_not_found")
+	if !ok {
+		return
+	}
+
+	image, err := h.repo.FindImage(c.Request.Context(), id)
+	if errors.Is(err, ErrNotFound) {
+		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
+		return
+	}
+	if errors.Is(err, ErrImageNotFound) {
+		helpers.WriteError(c, http.StatusNotFound, "product_image_not_found")
+		return
+	}
+	if err != nil {
+		helpers.ServerError(c, err)
+		return
+	}
+
+	c.Header("Cache-Control", "private, max-age=31536000, immutable")
+	c.Header("X-Content-Type-Options", "nosniff") // บอก browser ว่าเป็นรูปเท่านั้น ห้ามเดาเป็นชนิดอื่น
+	c.Data(http.StatusOK, image.ContentType, image.Data)
+}
+
+// UploadImage PUT /api/v1/products/:id/image — ส่งแบบ multipart/form-data ช่องชื่อ "image" ได้สินค้าที่มี image_version ใหม่
+func (h *Handler) UploadImage(c *gin.Context) {
+	id, ok := helpers.UUIDParam(c, "id", "product_not_found")
+	if !ok {
+		return
+	}
+
+	data, contentType, problem := helpers.ReadImage(c, "image")
+	if problem != "" {
+		helpers.WriteError(c, http.StatusBadRequest, "product_image_"+problem)
+		return
+	}
+
+	product, err := h.repo.SaveImage(c.Request.Context(), id, Image{Data: data, ContentType: contentType})
+	h.writeProduct(c, product, err)
+}
+
+// DeleteImage DELETE /api/v1/products/:id/image — ได้สินค้าที่ image_version = 0
+func (h *Handler) DeleteImage(c *gin.Context) {
+	id, ok := helpers.UUIDParam(c, "id", "product_not_found")
+	if !ok {
+		return
+	}
+
+	product, err := h.repo.DeleteImage(c.Request.Context(), id)
+	h.writeProduct(c, product, err)
+}
+
+// writeProduct ตอบสินค้า 200 / ไม่เจอ 404 / DB พัง 500
+func (h *Handler) writeProduct(c *gin.Context, product Product, err error) {
+	if errors.Is(err, ErrNotFound) {
+		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
+		return
+	}
+	if err != nil {
+		helpers.ServerError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, product)
 }

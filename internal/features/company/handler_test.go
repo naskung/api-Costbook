@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/naskung/api-Costbook/internal/helpers"
 	"github.com/naskung/api-Costbook/internal/middleware"
 	"github.com/naskung/api-Costbook/internal/utils"
 )
@@ -287,8 +288,8 @@ func TestHandler_UploadLogo(t *testing.T) {
 
 func TestHandler_UploadLogo_Fail(t *testing.T) {
 	// ไฟล์ PNG ที่ใหญ่เกิน 1 MB นิดเดียว และใหญ่เกินมาก
-	justTooLarge := append([]byte(pngBytes), make([]byte, maxLogoSize)...)
-	wayTooLarge := append([]byte(pngBytes), make([]byte, 5*maxLogoSize)...)
+	justTooLarge := append([]byte(pngBytes), make([]byte, helpers.MaxImageSize)...)
+	wayTooLarge := append([]byte(pngBytes), make([]byte, 5*helpers.MaxImageSize)...)
 
 	tests := []struct {
 		name       string

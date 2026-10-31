@@ -1,9 +1,11 @@
 package product
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +27,7 @@ const (
 type fakeRepository struct {
 	products []Product
 	inUseID  string // id สินค้าที่จำลองว่าเคยอยู่ในใบกำกับ
+	image    Image  // รูปของสินค้า (ใช้รูปเดียวทั้ง fake)
 	err      error  // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
 }
 
@@ -80,6 +83,36 @@ func (f *fakeRepository) Delete(ctx context.Context, id string) error {
 	}
 	_, err := f.FindByID(ctx, id)
 	return err
+}
+
+func (f *fakeRepository) FindImage(ctx context.Context, id string) (Image, error) {
+	if _, err := f.FindByID(ctx, id); err != nil {
+		return Image{}, err
+	}
+	if len(f.image.Data) == 0 {
+		return Image{}, ErrImageNotFound
+	}
+	return f.image, nil
+}
+
+func (f *fakeRepository) SaveImage(ctx context.Context, id string, image Image) (Product, error) {
+	p, err := f.FindByID(ctx, id)
+	if err != nil {
+		return Product{}, err
+	}
+	f.image = image
+	p.ImageVersion = 1700000000000
+	return p, nil
+}
+
+func (f *fakeRepository) DeleteImage(ctx context.Context, id string) (Product, error) {
+	p, err := f.FindByID(ctx, id)
+	if err != nil {
+		return Product{}, err
+	}
+	f.image = Image{}
+	p.ImageVersion = 0
+	return p, nil
 }
 
 // newTestRouter สร้าง Gin router สำหรับ test: route เหมือนของจริง แต่ใช้ fakeRepository แทน DB
@@ -287,4 +320,140 @@ func TestHandler_Create_CodeTaken(t *testing.T) {
 	rec := sendRequest(newTestRouter(coffeeRepo()), http.MethodPost, "/api/v1/products", `{"name":"กาแฟร้อน","code":"COF-01"}`)
 
 	checkError(t, rec, http.StatusConflict, "product_code_taken")
+}
+
+const testPNG = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+
+// sendImage อัปโหลดรูปแบบ multipart ช่อง "image" พร้อม token
+func sendImage(t *testing.T, router *gin.Engine, path string, data []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("image", "case.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	part.Write(data)
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPut, path, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	token, _ := utils.CreateToken("user-1", testSecret, time.Hour)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHandler_UploadImage(t *testing.T) {
+	repo := coffeeRepo()
+	rec := sendImage(t, newTestRouter(repo), "/api/v1/products/"+coffeeID+"/image", []byte(testPNG))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, ต้องได้ %d (%s)", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got Product
+	json.NewDecoder(rec.Body).Decode(&got)
+	if got.ImageVersion == 0 {
+		t.Error("image_version = 0, ต้องได้เวลาที่เปลี่ยนรูป")
+	}
+	if string(repo.image.Data) != testPNG || repo.image.ContentType != "image/png" {
+		t.Errorf("รูปที่บันทึก = %q (%s), ต้องได้ไฟล์ PNG ที่ส่งไป", repo.image.Data, repo.image.ContentType)
+	}
+}
+
+func TestHandler_UploadImage_Fail(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		data       []byte
+		wantStatus int
+		wantError  string
+	}{
+		{"ไม่ใช่รูป ได้ 400", "/api/v1/products/" + coffeeID + "/image", []byte("hello"), http.StatusBadRequest, "product_image_type_invalid"},
+		{"ใหญ่เกิน 1 MB ได้ 400", "/api/v1/products/" + coffeeID + "/image", append([]byte(testPNG), make([]byte, 1<<20)...), http.StatusBadRequest, "product_image_too_large"},
+		{"ไฟล์ว่าง ได้ 400", "/api/v1/products/" + coffeeID + "/image", []byte{}, http.StatusBadRequest, "product_image_required"},
+		{"ไม่มีสินค้า ได้ 404", "/api/v1/products/" + missingID + "/image", []byte(testPNG), http.StatusNotFound, "product_not_found"},
+		{"id ไม่ใช่ UUID ได้ 404", "/api/v1/products/abc/image", []byte(testPNG), http.StatusNotFound, "product_not_found"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := sendImage(t, newTestRouter(coffeeRepo()), tt.path, tt.data)
+			checkError(t, rec, tt.wantStatus, tt.wantError)
+		})
+	}
+}
+
+func TestHandler_Image(t *testing.T) {
+	repo := coffeeRepo()
+	repo.image = Image{Data: []byte(testPNG), ContentType: "image/png"}
+	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/products/"+coffeeID+"/image?v=1", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, ต้องได้ %d", rec.Code, http.StatusOK)
+	}
+	if rec.Header().Get("Content-Type") != "image/png" || rec.Body.String() != testPNG {
+		t.Errorf("ได้ %s %q, ต้องได้รูป PNG", rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Cache-Control"), "max-age") {
+		t.Errorf("Cache-Control = %q, ต้องให้ browser เก็บรูปไว้ได้", rec.Header().Get("Cache-Control"))
+	}
+}
+
+func TestHandler_Image_Fail(t *testing.T) {
+	tests := []struct {
+		name      string
+		repo      *fakeRepository
+		path      string
+		wantError string
+	}{
+		{"ยังไม่มีรูป ได้ 404", coffeeRepo(), "/api/v1/products/" + coffeeID + "/image", "product_image_not_found"},
+		{"ไม่มีสินค้า ได้ 404", coffeeRepo(), "/api/v1/products/" + missingID + "/image", "product_not_found"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := sendRequest(newTestRouter(tt.repo), http.MethodGet, tt.path, "")
+			checkError(t, rec, http.StatusNotFound, tt.wantError)
+		})
+	}
+}
+
+func TestHandler_Image_RequiresLogin(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/products/"+coffeeID+"/image", nil)
+	rec := httptest.NewRecorder()
+	newTestRouter(coffeeRepo()).ServeHTTP(rec, req)
+
+	checkError(t, rec, http.StatusUnauthorized, "unauthorized")
+}
+
+func TestHandler_DeleteImage(t *testing.T) {
+	repo := coffeeRepo()
+	repo.image = Image{Data: []byte(testPNG), ContentType: "image/png"}
+	rec := sendRequest(newTestRouter(repo), http.MethodDelete, "/api/v1/products/"+coffeeID+"/image", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, ต้องได้ %d", rec.Code, http.StatusOK)
+	}
+	var got Product
+	json.NewDecoder(rec.Body).Decode(&got)
+	if got.ImageVersion != 0 || len(repo.image.Data) != 0 {
+		t.Errorf("image_version = %d, รูปเหลือ %d ไบต์ ต้องได้ 0 ทั้งคู่", got.ImageVersion, len(repo.image.Data))
+	}
+}
+
+func TestHandler_DeleteImage_NotFound(t *testing.T) {
+	rec := sendRequest(newTestRouter(coffeeRepo()), http.MethodDelete, "/api/v1/products/"+missingID+"/image", "")
+	checkError(t, rec, http.StatusNotFound, "product_not_found")
+}
+
+func TestHandler_ImageDBError(t *testing.T) {
+	repo := coffeeRepo()
+	repo.err = errors.New("db down")
+	router := newTestRouter(repo)
+
+	checkError(t, sendRequest(router, http.MethodGet, "/api/v1/products/"+coffeeID+"/image", ""), http.StatusInternalServerError, "server_error")
+	checkError(t, sendRequest(router, http.MethodDelete, "/api/v1/products/"+coffeeID+"/image", ""), http.StatusInternalServerError, "server_error")
+	checkError(t, sendImage(t, router, "/api/v1/products/"+coffeeID+"/image", []byte(testPNG)), http.StatusInternalServerError, "server_error")
 }

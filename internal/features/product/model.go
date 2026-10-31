@@ -12,6 +12,7 @@ const (
 // stock เปลี่ยนผ่านหน้าสต็อก / เอกสารขายเท่านั้น, batch_quantity แก้ในหน้าคำนวณต้นทุน
 // track_stock = false → งานสั่งทำ / ค่าบริการ ไม่นับสต็อก ขายได้ไม่จำกัด
 // custom_fields = ค่าของช่องเพิ่มเติมที่ร้านตั้งเอง {"<id ช่อง>": "ค่า"} (ดู /product-fields)
+// image_version = เวลาที่เปลี่ยนรูปล่าสุด (0 = ไม่มีรูป) → รูปอยู่ที่ GET /products/{id}/image?v=<image_version>
 type Product struct {
 	ID            string            `json:"id"`
 	Code          string            `json:"code"`
@@ -26,6 +27,13 @@ type Product struct {
 	BatchQuantity int               `json:"batch_quantity"`
 	TrackStock    bool              `json:"track_stock"`
 	CustomFields  map[string]string `json:"custom_fields"`
+	ImageVersion  int64             `json:"image_version"`
+}
+
+// Image รูปสินค้า (ไฟล์ + ชนิดรูป เช่น image/png)
+type Image struct {
+	Data        []byte
+	ContentType string
 }
 
 // ProductRequest ข้อมูลที่รับมาตอนเพิ่ม / แก้สินค้า

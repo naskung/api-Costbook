@@ -2,15 +2,11 @@ package company
 
 import (
 	"errors"
-	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/naskung/api-Costbook/internal/helpers"
 )
-
-// maxUploadBody ขนาด request ใหญ่สุดตอนอัปโหลดโลโก้ = โลโก้ 1 MB + เผื่อส่วนหัวของ form 64 KB
-const maxUploadBody = maxLogoSize + 64<<10
 
 type Handler struct {
 	repo Repository
@@ -83,15 +79,9 @@ func (h *Handler) Logo(c *gin.Context) {
 
 // UploadLogo PUT /api/v1/company/logo — ส่งแบบ multipart/form-data ช่องชื่อ "logo"
 func (h *Handler) UploadLogo(c *gin.Context) {
-	data, code := readLogoFile(c)
-	if code != "" {
-		helpers.WriteError(c, http.StatusBadRequest, code)
-		return
-	}
-
-	contentType := logoContentType(data)
-	if contentType == "" {
-		helpers.WriteError(c, http.StatusBadRequest, "logo_type_invalid")
+	data, contentType, problem := helpers.ReadImage(c, "logo")
+	if problem != "" {
+		helpers.WriteError(c, http.StatusBadRequest, "logo_"+problem)
 		return
 	}
 
@@ -111,35 +101,4 @@ func (h *Handler) DeleteLogo(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
-}
-
-// readLogoFile อ่านไฟล์จากช่อง "logo" ของ form
-// คืน error code ถ้าไม่มีไฟล์ ("logo_required") หรือไฟล์ใหญ่เกิน ("logo_too_large")
-func readLogoFile(c *gin.Context) ([]byte, string) {
-	// กันไฟล์ใหญ่เกินตั้งแต่ตอนรับ ไม่ต้องรอรับไฟล์ทั้งก้อนก่อนค่อยเช็ค
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBody)
-
-	fileHeader, err := c.FormFile("logo")
-	var tooLarge *http.MaxBytesError
-	if errors.As(err, &tooLarge) {
-		return nil, "logo_too_large"
-	}
-	if err != nil {
-		return nil, "logo_required"
-	}
-	if fileHeader.Size > maxLogoSize {
-		return nil, "logo_too_large"
-	}
-
-	file, err := fileHeader.Open()
-	if err != nil {
-		return nil, "logo_required"
-	}
-	defer file.Close()
-
-	data, err := io.ReadAll(file)
-	if err != nil || len(data) == 0 {
-		return nil, "logo_required"
-	}
-	return data, ""
 }

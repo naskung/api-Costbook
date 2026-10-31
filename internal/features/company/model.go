@@ -2,7 +2,8 @@ package company
 
 import (
 	"strings"
-	"unicode"
+
+	"github.com/naskung/api-Costbook/internal/utils"
 )
 
 // Company ข้อมูลร้าน (ผู้ขาย) ใช้บนหน้าเว็บและใบกำกับภาษี
@@ -36,21 +37,8 @@ func (req CompanyRequest) Validate() string {
 	if strings.TrimSpace(req.Name) == "" {
 		return "company_name_required"
 	}
-	if req.TaxID != "" && !isTaxID(req.TaxID) {
+	if req.TaxID != "" && !utils.IsTaxID(req.TaxID) {
 		return "company_tax_id_invalid"
 	}
 	return ""
-}
-
-// isTaxID เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก
-func isTaxID(taxID string) bool {
-	if len(taxID) != 13 {
-		return false
-	}
-	for _, char := range taxID {
-		if !unicode.IsDigit(char) {
-			return false
-		}
-	}
-	return true
 }

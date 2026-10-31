@@ -7,8 +7,8 @@
 
 - **เสร็จแล้ว:** Phase 0, พื้นฐาน API (server, config, router, CORS, helpers), ต่อ DB, login (`POST /auth/login`, `GET /auth/me`)
 - **รันได้แล้ว:** `make run` → `http://localhost:8080/api/v1/health`, เอกสาร Swagger: `http://localhost:8080/docs`
-- **feature ที่เสร็จ:** auth (login), company (ข้อมูลร้าน + โลโก้)
-- **ยังไม่ได้ทำ:** `utils` คำนวณเงิน / ภาษี, `golang-migrate`, feature อื่น ๆ — รอผู้ใช้สั่งทีละส่วน
+- **feature ที่เสร็จ:** auth, company, product, cost, stock, transaction, invoice, dashboard — **ครบทุกเมนูแล้ว** (ทดสอบกับ DB จริง 58 กรณีผ่าน)
+- **ยังไม่ได้ทำ:** `golang-migrate`, จำกัดขนาด request body, ไฟล์ `sql/` ของตารางใหม่, integration test ของ repository
 
 ---
 
@@ -38,7 +38,8 @@
 - [x] `middleware/cors.go` (Gin middleware) + test
 - [x] `helpers`: `WriteError`, `ServerError` + test (ตอบสำเร็จใช้ `c.JSON` ของ Gin)
 - [x] เอกสาร Swagger: `docs/openapi.yaml` + หน้า `GET /docs` (Swagger UI จาก CDN, ไม่เพิ่ม package) + test เช็คว่าทุก route มีในเอกสาร
-- [ ] `utils`: `Round2`, `VAT`, `TotalWithVAT`, `PriceBeforeVAT`, `CostPerUnit`, `SellPrice` + test
+- [x] `utils`: `Round2`, `Profit`, `VAT`, `CostPerUnit`, `IsDate`, `IsUUID`, `IsTaxID` + test (`TotalWithVAT` / `PriceBeforeVAT` / `SellPrice` API ไม่ได้ใช้ → อยู่ฝั่ง Flutter อย่างเดียว)
+- [x] `helpers`: `MonthStart` (อ่าน `?month=`), `UUIDParam` (อ่าน `:id` ไม่ใช่ UUID → 404) + test
 
 ## Phase 2 — ฐานข้อมูล
 
@@ -50,19 +51,20 @@
 - [x] โหลดค่าจากไฟล์ `.env` ตอนพัฒนา ผ่าน `Makefile` (`make run`) + `.env.example`
 - [x] migration: `users` → `000001_create_users` (ผู้ใช้รัน SQL เองใน DBeaver)
 - [x] migration: `company` → `000002_create_company` (รันใน DB เครื่องนี้แล้ว) + `sql/company.sql`
-- [ ] migration: `products`, `product_costs`, `stock_movements`, `transactions`, `invoices`, `invoice_items`, `invoice_numbers`
+- [x] migration: `000003_create_products` (products, product_costs), `000004_create_invoices` (invoices, invoice_items, invoice_numbers), `000005_create_stock_movements`, `000006_create_transactions` — รันใน DB `costbook` แล้ว (ทดสอบขาขึ้น + ขาลงใน transaction แล้ว ROLLBACK ผ่าน)
+- [ ] `sql/` สำหรับ DBeaver ของตารางใหม่
 
-## Phase 3 — Features (รอคำสั่ง)
+## Phase 3 — Features
 
 แต่ละ feature: model + `Validate()` + test → repository → handler + test (fakeRepository) → ต่อ route
 
 - [x] company — ข้อมูลร้าน (`GET` / `PUT /company`) + โลโก้ (`GET` / `PUT` / `DELETE /company/logo`) + test
-- [ ] product — CRUD สินค้า
-- [ ] cost — รายการต้นทุน + คำนวณ `cost_price` ใหม่
-- [ ] stock — รับเข้า / เบิกออก / ใกล้หมด
-- [ ] transaction — รายรับ-รายจ่าย + สรุปรายเดือน
-- [ ] invoice — ออกใบกำกับ (transaction: รันเลข + บันทึก + ตัด stock + บันทึกรายรับ) / ยกเลิก
-- [ ] dashboard — ตัวเลขสรุป
+- [x] product — CRUD สินค้า (ลบสินค้าที่อยู่ในใบกำกับไม่ได้ 409) + test
+- [x] cost — ใบต้นทุน `GET` / `PUT /products/{id}/costs` (บันทึกทั้งใบ) + คำนวณ `cost_price` ใหม่ + test
+- [x] stock — คงเหลือ / ใกล้หมด / ประวัติ / รับเข้า / เบิกออก (ของไม่พอ 409) + test
+- [x] transaction — รายรับ-รายจ่าย + สรุปรายเดือน (รายรับจากใบกำกับแก้ / ลบไม่ได้ 409) + test
+- [x] invoice — ออกใบกำกับ (transaction เดียว: รันเลข + บันทึก + ตัด stock + บันทึกรายรับ) / ยกเลิก (คืน stock + ลบรายรับ) + test
+- [x] dashboard — ตัวเลขสรุป + สินค้าใกล้หมด + test
 
 ## Phase 4 — ความปลอดภัยและคุณภาพ
 
@@ -90,9 +92,9 @@
 - [x] ร้านเดียว หรือหลายร้าน → **1 ระบบ = 1 ร้าน** แต่ละร้านติดตั้งแยก (แบบ local) แก้ข้อมูลร้าน / โลโก้ผ่าน API หน้าเว็บไม่ต้องแก้ (ตัดสินใจ 2026-10-31)
 - [x] เก็บโลโก้ที่ไหน → ใน DB (`BYTEA`) ไม่เกิน 1 MB, PNG / JPG / WebP — ถ้าวันหลังมีรูปสินค้าเยอะค่อยย้ายไปบริการฝากไฟล์ (R2 / S3)
 - [ ] ผู้ใช้หลายคนในร้านเดียว แบ่งสิทธิ์ (admin / พนักงาน) ไหม
-- [ ] รูปแบบเลขที่ใบกำกับ (ค่าเริ่มต้นใน docs: `INV-2026-0001` รันใหม่ทุกปี)
-- [ ] ยกเลิกใบกำกับแล้ว ลบรายรับ หรือบันทึกรายการกลับรายการ (ค่าเริ่มต้นใน docs: ลบรายรับ + คืน stock)
-- [ ] จะเก็บรายการต้นทุนละเอียด (`product_costs`) หรือเก็บแค่ `cost_price` ตัวเดียว
+- [x] รูปแบบเลขที่ใบกำกับ → `INV-2026-0001` รันใหม่ทุกปี (ตามปีของวันที่ออกใบ) (ตัดสินใจ 2026-10-31)
+- [x] ยกเลิกใบกำกับ → ลบรายรับ + คืน stock, ใบกำกับแก้ / ลบไม่ได้, ร้านต้องมีเลขผู้เสียภาษีก่อนออกใบ (ตัดสินใจ 2026-10-31)
+- [x] เก็บต้นทุนละเอียด (`product_costs`) → คำนวณ `cost_price` ให้ (ตัดสินใจ 2026-10-31)
 
 ---
 
@@ -100,6 +102,7 @@
 
 | วันที่ | ทำอะไร | หมายเหตุ |
 |---|---|---|
+| 2026-10-31 | **API ทุกเมนู**: product, cost, stock, transaction, invoice, dashboard (model + Validate + logic + repository + handler + test) + migration 000003–000006 (รันใน DB `costbook` แล้ว) + `utils` (Round2, Profit, VAT, CostPerUnit, IsDate, IsUUID, IsTaxID — ย้าย isTaxID จาก company มาไว้ที่นี่) + `helpers` (MonthStart, UUIDParam) + `openapi.yaml` ครบ 29 endpoint (test เช็ค route แปลง `:id` → `{id}` แล้ว) — gofmt / vet / test ผ่านทุก package — ทดสอบจริงกับ DB ชั่วคราว `costbook_e2e` 58 กรณีผ่าน (VAT ทั้งใบ, รันเลข + ขึ้นปีใหม่, ร้านไม่มีเลขภาษี / ของไม่พอแล้ว rollback ไม่ตัด stock, ยกเลิกใบคืน stock + ลบรายรับ, ลบสินค้าในใบไม่ได้, รายรับจากใบลบไม่ได้) | e2e เจอบั๊กลำดับบรรทัดในใบกำกับสลับ (created_at เท่ากันใน transaction) → เพิ่ม `line_no` ใน invoice_items / product_costs (ตารางยังว่าง สร้างใหม่ใน DB แล้ว) / **กระทบ Flutter**: API ใหม่ทั้งหมด บันทึกใน PROGRESS ฝั่ง Flutter แล้ว |
 | 2026-10-31 | ใส่ข้อมูลร้านจริงใน DB เครื่องนี้ผ่าน API: MAKEHUB, 33/3 ม.3 ต.ท่าพริก อ.เมือง จ.ตราด 23000, 0909966818 + โลโก้ (PNG 1254×1254, 380 KB) — โหลดกลับมาได้ไฟล์ตรงกัน | ยังไม่มีเลขผู้เสียภาษี / สาขา (ต้องมีก่อนออกใบกำกับภาษี) |
 | 2026-10-31 | **ข้อมูลร้าน + โลโก้**: migration `000002_create_company` (แถวเดียว id = 1, logo `BYTEA`) — รันใน DB แล้ว, `sql/company.sql`, `features/company` (model + Validate, logic `logoContentType`, repository, handler), ต่อ route, เพิ่มใน `openapi.yaml` — test ผ่านทุก package (company 80.8%, ส่วนที่ขาดคือ repository) — ทดสอบจริงกับ DB 13 กรณีผ่าน: ดูข้อมูล / แก้ข้อมูล / ไม่ login ได้ 401 / เลขภาษีผิด 400 / อัปโหลด PNG แล้วโหลดกลับได้ไฟล์ตรงกัน / 2 MB ได้ `logo_too_large` / ไฟล์ข้อความได้ `logo_type_invalid` / ลบโลโก้แล้วได้ 404 / preflight 204 — ล้างข้อมูลทดสอบออกแล้ว (ร้านยังว่าง) | **กระทบ Flutter**: API ใหม่ บันทึกใน `PROGRESS.md` ฝั่ง Flutter แล้ว / ดู + โลโก้ไม่ต้อง login (ให้หน้า login แสดงได้) |
 | 2026-10-31 | เอกสาร Swagger: `docs/openapi.yaml` (health, auth/login, auth/me + Authorize ด้วย Bearer token), `docs/swagger.html`, `docs/docs.go` (go:embed → `GET /docs`, `GET /docs/openapi.yaml`) + test (`docs` 100%, router เพิ่ม `TestRouter_Docs`, `TestRouter_AllRoutesInOpenAPI`) — ตรวจ YAML + `$ref` ทั้งไฟล์ด้วย pyyaml ผ่าน (เจอและแก้ description ที่มี `: ` ไม่ได้ครอบ `"`), รันจริง `/docs` ได้ 200 HTML | ไม่เพิ่ม package — Swagger UI โหลดจาก unpkg (ต้องต่อเน็ตตอนเปิดดู) / test ใน Go เช็คแค่ว่ามี path ครบ ไม่ได้เช็คว่า YAML ถูกรูปแบบ |

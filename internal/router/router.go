@@ -9,6 +9,12 @@ import (
 	"github.com/naskung/api-Costbook/internal/config"
 	"github.com/naskung/api-Costbook/internal/features/auth"
 	"github.com/naskung/api-Costbook/internal/features/company"
+	"github.com/naskung/api-Costbook/internal/features/cost"
+	"github.com/naskung/api-Costbook/internal/features/dashboard"
+	"github.com/naskung/api-Costbook/internal/features/invoice"
+	"github.com/naskung/api-Costbook/internal/features/product"
+	"github.com/naskung/api-Costbook/internal/features/stock"
+	"github.com/naskung/api-Costbook/internal/features/transaction"
 	"github.com/naskung/api-Costbook/internal/helpers"
 	"github.com/naskung/api-Costbook/internal/middleware"
 )
@@ -33,6 +39,24 @@ func New(cfg config.Config, db *pgxpool.Pool) *gin.Engine {
 
 	companyHandler := company.NewHandler(company.NewPostgresRepository(db))
 	companyHandler.RegisterRoutes(api, authRequired)
+
+	productHandler := product.NewHandler(product.NewPostgresRepository(db))
+	productHandler.RegisterRoutes(api, authRequired)
+
+	costHandler := cost.NewHandler(cost.NewPostgresRepository(db))
+	costHandler.RegisterRoutes(api, authRequired)
+
+	stockHandler := stock.NewHandler(stock.NewPostgresRepository(db))
+	stockHandler.RegisterRoutes(api, authRequired)
+
+	transactionHandler := transaction.NewHandler(transaction.NewPostgresRepository(db))
+	transactionHandler.RegisterRoutes(api, authRequired)
+
+	invoiceHandler := invoice.NewHandler(invoice.NewPostgresRepository(db))
+	invoiceHandler.RegisterRoutes(api, authRequired)
+
+	dashboardHandler := dashboard.NewHandler(dashboard.NewPostgresRepository(db))
+	dashboardHandler.RegisterRoutes(api, authRequired)
 
 	return r
 }

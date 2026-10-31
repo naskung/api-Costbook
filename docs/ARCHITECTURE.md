@@ -78,8 +78,8 @@ api-Costbook/
 │   ├── database/             เชื่อมต่อ PostgreSQL (Phase 2)
 │   ├── router/               สร้าง Gin router + รวม route ทั้งหมดไว้ที่เดียว
 │   ├── middleware/           ทำงานก่อนทุก request: cors, auth (logger มากับ gin.Default() แล้ว)
-│   ├── helpers/              ช่วยตอบ error: WriteError, ServerError (ตอบสำเร็จใช้ c.JSON ของ Gin)
-│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money, tax, cost, token (สร้าง / ตรวจ JWT)
+│   ├── helpers/              ช่วยงาน HTTP: WriteError, ServerError, MonthStart (?month=), UUIDParam (:id) (ตอบสำเร็จใช้ c.JSON ของ Gin)
+│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT), cost (CostPerUnit), date (IsDate), check (IsUUID, IsTaxID), token (JWT)
 │   └── features/
 │       ├── auth/             login + ข้อมูลผู้ใช้ที่ login อยู่ (ตาราง users)
 │       ├── company/          ข้อมูลร้าน + โลโก้ (ตาราง company มีแถวเดียว)
@@ -91,10 +91,11 @@ api-Costbook/
 │       │   ├── handler_test.go    test ด้วย fakeRepository (ไม่ต้องมี DB)
 │       │   ├── logic.go           (ถ้ามี) คำนวณเฉพาะ feature นี้
 │       │   └── logic_test.go
-│       ├── stock/
-│       ├── transaction/
-│       ├── invoice/
-│       └── dashboard/
+│       ├── cost/             ใบต้นทุนของสินค้า (ตาราง product_costs) → คำนวณ cost_price
+│       ├── stock/            คงเหลือ / รับเข้า / เบิกออก (ตาราง stock_movements)
+│       ├── transaction/      รายรับ-รายจ่าย + สรุปรายเดือน
+│       ├── invoice/          ใบกำกับภาษี: ออกใบ (รันเลข + ตัด stock + บันทึกรายรับ) / ยกเลิก
+│       └── dashboard/        ตัวเลขสรุปหน้าแรก (อ่านอย่างเดียว ไม่มีตารางของตัวเอง)
 ├── migrations/               ไฟล์ SQL สร้าง / แก้ตาราง เช่น 000001_create_users.up.sql / .down.sql
 ├── sql/                      คำสั่ง SQL ไว้ copy ไปรันเองใน DBeaver (select / insert / update / delete) 1 ไฟล์ต่อ 1 ตาราง — API ไม่ได้ใช้
 ├── docs/
@@ -163,10 +164,10 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 | status error | เมื่อไหร่ | ตัวอย่าง code |
 |---|---|---|
-| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `product_name_required`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid` |
+| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `month_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid` |
 | 401 | ยังไม่ login / token ผิดหรือหมดอายุ / login ไม่ผ่าน | `unauthorized`, `invalid_credentials` |
-| 404 | ไม่เจอข้อมูล / ไม่มี path นี้ | `product_not_found`, `logo_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
-| 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `product_in_use` |
+| 404 | ไม่เจอข้อมูล / ไม่มี path นี้ / id ไม่ใช่ UUID | `product_not_found`, `transaction_not_found`, `invoice_not_found`, `logo_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
+| 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled`, `company_tax_id_required` |
 | 500 | server พัง | `server_error` (ใช้ `helpers.ServerError` → error จริงลง log ไม่ส่งให้ client) |
 
 ---
@@ -186,32 +187,35 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `GET /api/v1/company/logo` | โลโก้ร้าน (ตอบเป็นรูป) — ไม่ต้อง login |
 | | `PUT /api/v1/company/logo` | อัปโหลดโลโก้ (multipart ช่อง `logo`, PNG / JPG / WebP ไม่เกิน 1 MB) |
 | | `DELETE /api/v1/company/logo` | ลบโลโก้ |
-| product | `GET /api/v1/products` | รายการสินค้า |
+| product ✅ | `GET /api/v1/products` | รายการสินค้า |
 | | `GET /api/v1/products/{id}` | สินค้า 1 ตัว |
 | | `POST /api/v1/products` | เพิ่มสินค้า |
 | | `PUT /api/v1/products/{id}` | แก้สินค้า |
 | | `DELETE /api/v1/products/{id}` | ลบสินค้า |
-| cost | `GET /api/v1/products/{id}/costs` | รายการต้นทุน (วัตถุดิบ / ค่าแรง / ค่าใช้จ่ายอื่น) |
-| | `POST /api/v1/products/{id}/costs` | เพิ่มรายการต้นทุน → คำนวณ `cost_price` ใหม่ |
-| | `DELETE /api/v1/products/{id}/costs/{costId}` | ลบรายการต้นทุน → คำนวณ `cost_price` ใหม่ |
-| stock | `GET /api/v1/stock?low=true` | จำนวนคงเหลือ (`low=true` = เฉพาะใกล้หมด) |
+| cost ✅ | `GET /api/v1/products/{id}/costs` | ใบต้นทุน: รายการต้นทุน (วัตถุดิบ / ค่าแรง / ค่าใช้จ่ายอื่น) + จำนวนผลิตต่อรอบ + ต้นทุน / ราคาขายต่อชิ้น |
+| | `PUT /api/v1/products/{id}/costs` | บันทึกทั้งใบ (แทนที่รายการเดิมทั้งหมด) → คำนวณ `cost_price` ใหม่ + บันทึก `sell_price` |
+| stock ✅ | `GET /api/v1/stock?low=true` | จำนวนคงเหลือ (`low=true` = เฉพาะใกล้หมด) |
 | | `GET /api/v1/stock/movements?product_id=` | ประวัติรับเข้า / เบิกออก |
 | | `POST /api/v1/stock/in` | รับสินค้าเข้า |
 | | `POST /api/v1/stock/out` | เบิกสินค้าออก |
-| transaction | `GET /api/v1/transactions?month=2026-10` | รายรับ-รายจ่ายของเดือน |
+| transaction ✅ | `GET /api/v1/transactions?month=2026-10` | รายรับ-รายจ่ายของเดือน |
 | | `GET /api/v1/transactions/summary?month=2026-10` | สรุปรายรับ รายจ่าย กำไร |
 | | `POST /api/v1/transactions` | เพิ่มรายการ |
 | | `PUT /api/v1/transactions/{id}` | แก้รายการ |
 | | `DELETE /api/v1/transactions/{id}` | ลบรายการ |
-| invoice | `GET /api/v1/invoices` | รายการใบกำกับภาษี |
+| invoice ✅ | `GET /api/v1/invoices?month=2026-10` | รายการใบกำกับภาษีของเดือน |
 | | `GET /api/v1/invoices/{id}` | ใบกำกับ 1 ใบ (Flutter เอาไปสร้าง PDF) |
 | | `POST /api/v1/invoices` | ออกใบกำกับ |
 | | `POST /api/v1/invoices/{id}/cancel` | ยกเลิกใบกำกับ |
-| dashboard | `GET /api/v1/dashboard?month=2026-10` | ตัวเลขสรุปหน้าแรก |
+| dashboard ✅ | `GET /api/v1/dashboard?month=2026-10` | ตัวเลขสรุปหน้าแรก |
 | auth ✅ | `POST /api/v1/auth/login` | login ได้ token |
 | | `GET /api/v1/auth/me` | ข้อมูลผู้ใช้ที่ login อยู่ (ต้องส่ง token) |
 
-ในตารางเขียน path แบบ `{id}` แต่ในโค้ด Gin เขียนเป็น `:id` เช่น `api.GET("/products/:id", ...)` แล้วอ่านค่าด้วย `c.Param("id")`
+ในตารางเขียน path แบบ `{id}` แต่ในโค้ด Gin เขียนเป็น `:id` เช่น `api.GET("/products/:id", ...)` แล้วอ่านค่าด้วย `helpers.UUIDParam(c, "id", "product_not_found")` (id ไม่ใช่ UUID → ตอบ 404 ให้เลย ไม่ส่งไป DB)
+
+ทุก endpoint ยกเว้น health / auth/login / GET company / GET company/logo **ต้อง login** (`authRequired`)
+`?month=2026-10` ไม่ส่ง = เดือนนี้ อ่านด้วย `helpers.MonthStart(c)` ได้วันแรกของเดือน `"2026-10-01"` ไปใช้ใน SQL: `date >= $1::date AND date < $1::date + interval '1 month'`
+รายละเอียด field ของทุก endpoint ดูใน Swagger (`docs/openapi.yaml`)
 
 ### รายละเอียด auth (ทำแล้ว)
 
@@ -238,6 +242,23 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 route ใหม่ที่ต้อง login ก่อน → ใส่ `authRequired` (`middleware.Auth`) ใน `router.go` แล้ว handler อ่าน id ผู้ใช้ด้วย `c.GetString(middleware.UserIDKey)`
 
+### รายละเอียด product / cost / stock (ทำแล้ว)
+
+- สินค้าใหม่ `stock = 0` — เพิ่มของผ่าน `POST /stock/in` เท่านั้น (`PUT /products/{id}` แก้ stock ไม่ได้)
+- ลบสินค้าที่เคยอยู่ในใบกำกับไม่ได้ → 409 `product_in_use` / ลบได้ → รายการต้นทุนและประวัติ stock หายไปด้วย
+- ใบต้นทุน `PUT /products/{id}/costs` ส่ง `{ "batch_quantity", "sell_price", "items": [{ "type", "name", "amount" }] }` ทั้งใบ
+  → `cost_price = utils.CostPerUnit(วัตถุดิบ, ค่าแรง, ค่าใช้จ่ายอื่น, batch_quantity)` บันทึกลงสินค้า รายการเรียงตามประเภท แล้วตามลำดับที่กรอก (`line_no`)
+- รับเข้า / เบิกออก `{ "product_id", "quantity", "note" }` ใช้ SQL `stock = stock + $1 WHERE stock + $1 >= 0` → เบิกเกินที่มีได้ 409 `stock_not_enough`
+- ประวัติที่มี `invoice_no` = เกิดจากใบกำกับ (out = ออกใบ, in = ยกเลิกใบ)
+
+### รายละเอียด transaction / invoice / dashboard (ทำแล้ว)
+
+- `category` เป็นรหัสหมวด (Flutter แปลเป็นชื่อ) — API เช็คแค่ว่าห้ามว่าง รายรับจากใบกำกับใช้ `sales`
+- รายการที่มี `invoice_id` (รายรับจากใบกำกับ) แก้ / ลบไม่ได้ → 409 `transaction_from_invoice` ต้องยกเลิกใบกำกับแทน
+- ออกใบกำกับ: ร้านต้องมีเลขผู้เสียภาษีก่อน (409 `company_tax_id_required`), `unit_price` = ราคาก่อน VAT, ตอบใบเต็ม (เหมือน `GET /invoices/{id}`)
+- ยกเลิกใบกำกับ: ได้ใบที่ `status = cancelled`, ยกเลิกซ้ำได้ 409 `invoice_already_cancelled`
+- dashboard: รายรับ / รายจ่าย / กำไรของเดือน, จำนวน + ยอดใบกำกับที่ยังไม่ยกเลิก, จำนวนสินค้า, สินค้าใกล้หมด (ไม่เกิน 5 ตัว เหลือน้อยสุดก่อน)
+
 ### รายละเอียด company (ทำแล้ว)
 
 **1 ระบบ = 1 ร้าน** — ร้านใหม่ติดตั้งระบบแยก (แบบ local) แล้วแก้ชื่อ / ที่อยู่ / โลโก้ผ่าน API หน้าเว็บ Flutter ใช้ตัวเดียวกันทุกร้าน ไม่ต้องแก้
@@ -256,16 +277,18 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | ตาราง | เก็บอะไร | column หลัก |
 |---|---|---|
 | `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type |
-| `products` | สินค้า | id, name, unit, cost_price, sell_price, stock, min_stock, batch_quantity |
-| `product_costs` | รายการต้นทุนของสินค้า | id, product_id, type (material / labor / overhead), name, amount |
-| `stock_movements` | ประวัติรับเข้า / เบิกออก | id, product_id, type (in / out), quantity, note, invoice_id, created_at |
-| `transactions` | รายรับ-รายจ่าย | id, type (income / expense), category, amount, date, note, invoice_id |
-| `invoices` | ใบกำกับภาษี | id, invoice_no, issue_date, status, ข้อมูลผู้ขาย + ผู้ซื้อ, subtotal, vat, total |
-| `invoice_items` | รายการในใบกำกับ | id, invoice_id, product_id, name, quantity, unit_price, amount |
-| `invoice_numbers` | ตัวรันเลขที่ใบกำกับ | year, last_number |
+| `products` | สินค้า (migration `000003_create_products`) | id, name, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0) |
+| `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), name, amount |
+| `invoices` | ใบกำกับภาษี (`000004_create_invoices`) | id, invoice_no (ห้ามซ้ำ), issue_date, status (issued / cancelled), seller_* + customer_* ณ วันที่ออก, note, subtotal, vat, total, cancelled_at |
+| `invoice_items` | รายการในใบกำกับ (`000004`, สินค้าที่อยู่ในนี้ลบไม่ได้) | id, invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount |
+| `invoice_numbers` | ตัวรันเลขที่ใบกำกับ (`000004`) | year, last_number |
+| `stock_movements` | ประวัติรับเข้า / เบิกออก (`000005_create_stock_movements`) | id, product_id, type (in / out), quantity, note, invoice_id, created_at |
+| `transactions` | รายรับ-รายจ่าย (`000006_create_transactions`) | id, type (income / expense), category, amount (> 0), date, note, invoice_id (ห้ามซ้ำ) |
 | `users` | ผู้ใช้ที่ login ได้ (migration `000001_create_users`) | id, email (ห้ามซ้ำ), password_hash (bcrypt), first_name, last_name |
 
 - ทุกตารางมี `created_at` และ `updated_at`
+- `line_no` = ลำดับบรรทัดตามที่ผู้ใช้กรอก — บันทึกหลายบรรทัดใน transaction เดียว `created_at` เท่ากันหมด เรียงด้วย `created_at` ไม่ได้
+- migration รันเองด้วย `psql costbook -f migrations/<ไฟล์>.up.sql` ตามลำดับเลข (ยังไม่ได้ใช้ `golang-migrate`)
 - `cost_price` = `utils.CostPerUnit(วัตถุดิบ, ค่าแรง, ค่าใช้จ่ายอื่น, batch_quantity)` คำนวณใหม่ทุกครั้งที่ `product_costs` เปลี่ยน
 
 ---

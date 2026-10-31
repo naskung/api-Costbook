@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -23,6 +23,18 @@ tags:
     description: login และข้อมูลผู้ใช้
   - name: company
     description: ข้อมูลร้าน (ผู้ขาย) + โลโก้ ใช้บนหน้าเว็บและใบกำกับภาษี — 1 ระบบ = 1 ร้าน
+  - name: product
+    description: สินค้า (ต้อง login)
+  - name: cost
+    description: คำนวณต้นทุนต่อชิ้น จากรายการวัตถุดิบ / ค่าแรง / ค่าใช้จ่ายอื่น (ต้อง login)
+  - name: stock
+    description: จำนวนคงเหลือ รับเข้า / เบิกออก (ต้อง login)
+  - name: transaction
+    description: รายรับ-รายจ่าย และสรุปรายเดือน (ต้อง login)
+  - name: invoice
+    description: ใบกำกับภาษี — ออกใบแล้วตัด stock + บันทึกรายรับให้อัตโนมัติ แก้ / ลบไม่ได้ ผิดให้ยกเลิก (ต้อง login)
+  - name: dashboard
+    description: ตัวเลขสรุปหน้าแรก (ต้อง login)
 
 paths:
   /health:
@@ -259,6 +271,602 @@ paths:
         "500":
           $ref: "#/components/responses/ServerError"
 
+  /products:
+    get:
+      tags: [product]
+      summary: รายการสินค้าทั้งหมด (เรียงตามชื่อ)
+      operationId: listProducts
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: รายการสินค้า (ไม่มีสินค้า = [])
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [product]
+      summary: เพิ่มสินค้า
+      description: จำนวนคงเหลือเริ่มที่ 0 — เพิ่มของเข้าผ่าน POST /stock/in
+      operationId: createProduct
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductRequest"
+      responses:
+        "201":
+          description: เพิ่มแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/ProductBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /products/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [product]
+      summary: สินค้า 1 ตัว
+      operationId: getProduct
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ข้อมูลสินค้า
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [product]
+      summary: แก้สินค้า
+      description: แก้จำนวนคงเหลือตรงนี้ไม่ได้ ต้องรับเข้า / เบิกออกที่ /stock
+      operationId: updateProduct
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductRequest"
+      responses:
+        "200":
+          description: บันทึกแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/ProductBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags: [product]
+      summary: ลบสินค้า
+      description: รายการต้นทุนและประวัติสต็อกของสินค้านี้จะถูกลบด้วย — สินค้าที่เคยอยู่ในใบกำกับลบไม่ได้
+      operationId: deleteProduct
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: ลบแล้ว (ไม่มี body)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "409":
+          description: สินค้าเคยอยู่ในใบกำกับแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: product_in_use }
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /products/{id}/costs:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [cost]
+      summary: ใบต้นทุนของสินค้า
+      operationId: getCostSheet
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: รายการต้นทุน + จำนวนผลิตต่อรอบ + ต้นทุน / ราคาขายต่อชิ้น
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostSheet"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [cost]
+      summary: บันทึกใบต้นทุน
+      description: "ส่งมาทั้งใบ รายการเดิมถูกแทนที่ทั้งหมด — API คำนวณ cost_price = (วัตถุดิบ + ค่าแรง + ค่าใช้จ่ายอื่น) ÷ batch_quantity แล้วบันทึกลงสินค้า พร้อม sell_price"
+      operationId: saveCostSheet
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CostSheetRequest"
+      responses:
+        "200":
+          description: บันทึกแล้ว ได้ใบต้นทุนล่าสุด
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostSheet"
+        "400":
+          description: ข้อมูลที่ส่งมาผิด
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalid_json:
+                  value: { error: invalid_json }
+                cost_batch_quantity_invalid:
+                  summary: จำนวนที่ผลิตได้ต่อรอบต้องมากกว่า 0
+                  value: { error: cost_batch_quantity_invalid }
+                product_price_invalid:
+                  summary: ราคาขายติดลบ
+                  value: { error: product_price_invalid }
+                cost_type_invalid:
+                  summary: type ต้องเป็น material / labor / overhead
+                  value: { error: cost_type_invalid }
+                cost_name_required:
+                  value: { error: cost_name_required }
+                cost_amount_invalid:
+                  summary: จำนวนเงินติดลบ
+                  value: { error: cost_amount_invalid }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /stock:
+    get:
+      tags: [stock]
+      summary: จำนวนคงเหลือของทุกสินค้า (ใกล้หมดขึ้นก่อน)
+      operationId: listStock
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: low
+          in: query
+          description: true = เฉพาะสินค้าใกล้หมด (คงเหลือ ≤ จำนวนขั้นต่ำ)
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: รายการคงเหลือ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StockItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /stock/movements:
+    get:
+      tags: [stock]
+      summary: ประวัติรับเข้า / เบิกออก ล่าสุด 200 รายการ
+      operationId: listStockMovements
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: product_id
+          in: query
+          description: ไม่ส่ง = ทุกสินค้า
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: ประวัติ (ล่าสุดอยู่บน)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Movement"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /stock/in:
+    post:
+      tags: [stock]
+      summary: รับสินค้าเข้า
+      operationId: stockIn
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MovementRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/MovementCreated"
+        "400":
+          $ref: "#/components/responses/MovementBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /stock/out:
+    post:
+      tags: [stock]
+      summary: เบิกสินค้าออก
+      operationId: stockOut
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MovementRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/MovementCreated"
+        "400":
+          $ref: "#/components/responses/MovementBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "409":
+          $ref: "#/components/responses/StockNotEnough"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /transactions:
+    get:
+      tags: [transaction]
+      summary: รายรับ-รายจ่ายของเดือน (ล่าสุดอยู่บน)
+      operationId: listTransactions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Month"
+      responses:
+        "200":
+          description: รายการของเดือน
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Transaction"
+        "400":
+          $ref: "#/components/responses/MonthInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [transaction]
+      summary: เพิ่มรายรับ / รายจ่าย
+      operationId: createTransaction
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransactionRequest"
+      responses:
+        "201":
+          description: เพิ่มแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "400":
+          $ref: "#/components/responses/TransactionBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /transactions/summary:
+    get:
+      tags: [transaction]
+      summary: สรุปรายรับ รายจ่าย กำไร ของเดือน
+      operationId: transactionSummary
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Month"
+      responses:
+        "200":
+          description: ยอดสรุป
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionSummary"
+        "400":
+          $ref: "#/components/responses/MonthInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /transactions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    put:
+      tags: [transaction]
+      summary: แก้รายการ
+      description: รายรับที่มาจากใบกำกับแก้ไม่ได้ ต้องยกเลิกใบกำกับ
+      operationId: updateTransaction
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransactionRequest"
+      responses:
+        "200":
+          description: บันทึกแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transaction"
+        "400":
+          $ref: "#/components/responses/TransactionBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/TransactionNotFound"
+        "409":
+          $ref: "#/components/responses/TransactionFromInvoice"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags: [transaction]
+      summary: ลบรายการ
+      description: รายรับที่มาจากใบกำกับลบไม่ได้ ต้องยกเลิกใบกำกับ
+      operationId: deleteTransaction
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: ลบแล้ว (ไม่มี body)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/TransactionNotFound"
+        "409":
+          $ref: "#/components/responses/TransactionFromInvoice"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /invoices:
+    get:
+      tags: [invoice]
+      summary: ใบกำกับภาษีของเดือน (ล่าสุดอยู่บน)
+      operationId: listInvoices
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Month"
+      responses:
+        "200":
+          description: รายการใบกำกับ (ข้อมูลย่อ)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InvoiceSummary"
+        "400":
+          $ref: "#/components/responses/MonthInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [invoice]
+      summary: ออกใบกำกับภาษี
+      description: |
+        ทำใน DB transaction เดียว ขั้นไหนพัง ยกเลิกทั้งหมด:
+        1. รันเลขที่ใบ INV-ปี-เลข 4 หลัก (รันใหม่ทุกปี ตามปีของ issue_date)
+        2. บันทึกใบ + รายการสินค้า (เก็บข้อมูลร้าน / ชื่อสินค้า ณ วันที่ออก)
+        3. ตัด stock ของทุกสินค้าในใบ
+        4. บันทึกรายรับ หมวด sales
+
+        unit_price เป็นราคาก่อน VAT — VAT 7% คิดจากยอดรวมทั้งใบ
+        ร้านต้องมีเลขผู้เสียภาษีก่อน (PUT /company)
+      operationId: createInvoice
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvoiceRequest"
+      responses:
+        "201":
+          description: ออกใบแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+        "400":
+          description: ข้อมูลที่ส่งมาผิด
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalid_json:
+                  value: { error: invalid_json }
+                invoice_date_invalid:
+                  summary: "วันที่ต้องเป็นรูปแบบ 2026-10-31"
+                  value: { error: invoice_date_invalid }
+                invoice_customer_required:
+                  value: { error: invoice_customer_required }
+                invoice_customer_tax_id_invalid:
+                  summary: เลขผู้เสียภาษีลูกค้าไม่ใช่ตัวเลข 13 หลัก
+                  value: { error: invoice_customer_tax_id_invalid }
+                invoice_items_required:
+                  value: { error: invoice_items_required }
+                invoice_item_invalid:
+                  summary: สินค้าไม่มี id / จำนวน ≤ 0 / ราคาติดลบ
+                  value: { error: invoice_item_invalid }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "409":
+          description: ของในสต็อกไม่พอ / ร้านยังไม่มีเลขผู้เสียภาษี
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                stock_not_enough:
+                  value: { error: stock_not_enough }
+                company_tax_id_required:
+                  value: { error: company_tax_id_required }
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /invoices/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [invoice]
+      summary: ใบกำกับ 1 ใบ พร้อมรายการสินค้า (Flutter เอาไปสร้าง PDF)
+      operationId: getInvoice
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ใบกำกับ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/InvoiceNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /invoices/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      tags: [invoice]
+      summary: ยกเลิกใบกำกับ
+      description: ทำใน transaction เดียว — เปลี่ยนสถานะเป็น cancelled + คืน stock + ลบรายรับของใบนี้
+      operationId: cancelInvoice
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ยกเลิกแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/InvoiceNotFound"
+        "409":
+          description: ใบนี้ยกเลิกไปแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: invoice_already_cancelled }
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /dashboard:
+    get:
+      tags: [dashboard]
+      summary: ตัวเลขสรุปหน้าแรกของเดือน
+      operationId: getDashboard
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Month"
+      responses:
+        "200":
+          description: ตัวเลขสรุป
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+        "400":
+          $ref: "#/components/responses/MonthInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -266,6 +874,23 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: "token ที่ได้จาก `POST /auth/login` (ส่งใน header `Authorization: Bearer <token>`)"
+
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      description: id แบบ UUID (ไม่ใช่ UUID → 404)
+      schema:
+        type: string
+        format: uuid
+    Month:
+      name: month
+      in: query
+      description: "เดือนที่ต้องการ รูปแบบ 2026-10 — ไม่ส่ง = เดือนนี้"
+      schema:
+        type: string
+        example: "2026-10"
 
   responses:
     Unauthorized:
@@ -282,6 +907,107 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
           example: { error: server_error }
+
+    MonthInvalid:
+      description: "month ผิดรูปแบบ (ต้องเป็น 2026-10)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: month_invalid }
+    ProductNotFound:
+      description: ไม่มีสินค้านี้
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: product_not_found }
+    ProductBadRequest:
+      description: ข้อมูลสินค้าผิด
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            invalid_json:
+              value: { error: invalid_json }
+            product_name_required:
+              value: { error: product_name_required }
+            product_price_invalid:
+              summary: ต้นทุน / ราคาขายติดลบ
+              value: { error: product_price_invalid }
+            product_min_stock_invalid:
+              summary: จำนวนขั้นต่ำติดลบ
+              value: { error: product_min_stock_invalid }
+    MovementCreated:
+      description: บันทึกแล้ว ได้ประวัติรายการนี้
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Movement"
+    MovementBadRequest:
+      description: ข้อมูลที่ส่งมาผิด
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            invalid_json:
+              value: { error: invalid_json }
+            stock_product_required:
+              summary: ไม่ได้เลือกสินค้า
+              value: { error: stock_product_required }
+            stock_quantity_invalid:
+              summary: จำนวนต้องมากกว่า 0
+              value: { error: stock_quantity_invalid }
+    StockNotEnough:
+      description: ของในสต็อกไม่พอ
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: stock_not_enough }
+    TransactionBadRequest:
+      description: ข้อมูลที่ส่งมาผิด
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            invalid_json:
+              value: { error: invalid_json }
+            transaction_type_invalid:
+              summary: type ต้องเป็น income / expense
+              value: { error: transaction_type_invalid }
+            transaction_category_required:
+              value: { error: transaction_category_required }
+            transaction_amount_invalid:
+              summary: จำนวนเงินต้องมากกว่า 0
+              value: { error: transaction_amount_invalid }
+            transaction_date_invalid:
+              summary: "วันที่ต้องเป็นรูปแบบ 2026-10-31"
+              value: { error: transaction_date_invalid }
+    TransactionNotFound:
+      description: ไม่มีรายการนี้
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: transaction_not_found }
+    TransactionFromInvoice:
+      description: รายการนี้มาจากใบกำกับ แก้ / ลบตรง ๆ ไม่ได้
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: transaction_from_invoice }
+    InvoiceNotFound:
+      description: ไม่มีใบกำกับนี้
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: invoice_not_found }
 
   schemas:
     Error:
@@ -382,3 +1108,499 @@ components:
         phone:
           type: string
           example: 02-123-4567
+
+    Product:
+      type: object
+      required: [id, name, unit, cost_price, sell_price, stock, min_stock, batch_quantity]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: กาแฟเย็น
+        unit:
+          type: string
+          example: แก้ว
+        cost_price:
+          type: number
+          description: ต้นทุนต่อชิ้น (คำนวณจากหน้าคำนวณต้นทุน หรือกรอกเอง)
+          example: 18.5
+        sell_price:
+          type: number
+          description: ราคาขายต่อชิ้น ก่อน VAT
+          example: 45
+        stock:
+          type: integer
+          description: จำนวนคงเหลือ (แก้ผ่าน /stock เท่านั้น)
+          example: 20
+        min_stock:
+          type: integer
+          description: เหลือเท่านี้หรือน้อยกว่า = ใกล้หมด
+          example: 5
+        batch_quantity:
+          type: integer
+          description: จำนวนที่ผลิตได้ต่อรอบ (ใช้คำนวณต้นทุนต่อชิ้น)
+          example: 1
+
+    ProductRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: ชื่อสินค้า (ห้ามว่าง)
+          example: กาแฟเย็น
+        unit:
+          type: string
+          example: แก้ว
+        cost_price:
+          type: number
+          minimum: 0
+          example: 18.5
+        sell_price:
+          type: number
+          minimum: 0
+          example: 45
+        min_stock:
+          type: integer
+          minimum: 0
+          example: 5
+
+    CostSheet:
+      type: object
+      required: [product_id, product_name, unit, batch_quantity, cost_price, sell_price, items]
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        product_name:
+          type: string
+          example: กาแฟเย็น
+        unit:
+          type: string
+          example: แก้ว
+        batch_quantity:
+          type: integer
+          example: 20
+        cost_price:
+          type: number
+          description: ต้นทุนต่อชิ้นที่ API คำนวณให้
+          example: 18.5
+        sell_price:
+          type: number
+          example: 45
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CostItem"
+
+    CostItem:
+      type: object
+      required: [id, type, name, amount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [material, labor, overhead]
+          description: material = วัตถุดิบ, labor = ค่าแรง, overhead = ค่าใช้จ่ายอื่น
+        name:
+          type: string
+          example: เมล็ดกาแฟ
+        amount:
+          type: number
+          description: จำนวนเงินต่อรอบการผลิต
+          example: 250
+
+    CostSheetRequest:
+      type: object
+      required: [batch_quantity]
+      properties:
+        batch_quantity:
+          type: integer
+          minimum: 1
+          example: 20
+        sell_price:
+          type: number
+          minimum: 0
+          example: 45
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CostItemRequest"
+
+    CostItemRequest:
+      type: object
+      required: [type, name, amount]
+      properties:
+        type:
+          type: string
+          enum: [material, labor, overhead]
+        name:
+          type: string
+          example: เมล็ดกาแฟ
+        amount:
+          type: number
+          minimum: 0
+          example: 250
+
+    StockItem:
+      type: object
+      required: [product_id, name, unit, stock, min_stock, is_low]
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: กาแฟเย็น
+        unit:
+          type: string
+          example: แก้ว
+        stock:
+          type: integer
+          example: 3
+        min_stock:
+          type: integer
+          example: 5
+        is_low:
+          type: boolean
+          description: true = คงเหลือ ≤ จำนวนขั้นต่ำ
+          example: true
+
+    Movement:
+      type: object
+      required: [id, product_id, product_name, unit, type, quantity, note, invoice_no, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        product_name:
+          type: string
+          example: กาแฟเย็น
+        unit:
+          type: string
+          example: แก้ว
+        type:
+          type: string
+          enum: [in, out]
+          description: in = รับเข้า, out = เบิกออก
+        quantity:
+          type: integer
+          example: 10
+        note:
+          type: string
+          example: ซื้อเพิ่มจากร้านส่ง
+        invoice_no:
+          type: string
+          description: ไม่ว่าง = เกิดจากใบกำกับ (out = ออกใบ, in = ยกเลิกใบ)
+          example: ""
+        created_at:
+          type: string
+          format: date-time
+
+    MovementRequest:
+      type: object
+      required: [product_id, quantity]
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          minimum: 1
+          example: 10
+        note:
+          type: string
+          example: ซื้อเพิ่มจากร้านส่ง
+
+    Transaction:
+      type: object
+      required: [id, type, category, amount, date, note, invoice_id, invoice_no]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [income, expense]
+        category:
+          type: string
+          description: รหัสหมวด เช่น sales, material, rent (Flutter แปลเป็นชื่อหมวด) — รายรับจากใบกำกับเป็น sales
+          example: material
+        amount:
+          type: number
+          example: 250.5
+        date:
+          type: string
+          format: date
+          example: "2026-10-31"
+        note:
+          type: string
+          example: ซื้อแป้ง
+        invoice_id:
+          type: string
+          description: ไม่ว่าง = รายรับจากใบกำกับ แก้ / ลบไม่ได้
+          example: ""
+        invoice_no:
+          type: string
+          example: ""
+
+    TransactionRequest:
+      type: object
+      required: [type, category, amount, date]
+      properties:
+        type:
+          type: string
+          enum: [income, expense]
+        category:
+          type: string
+          example: material
+        amount:
+          type: number
+          description: มากกว่า 0
+          example: 250.5
+        date:
+          type: string
+          format: date
+          example: "2026-10-31"
+        note:
+          type: string
+          example: ซื้อแป้ง
+
+    TransactionSummary:
+      type: object
+      required: [month, income, expense, profit]
+      properties:
+        month:
+          type: string
+          example: "2026-10"
+        income:
+          type: number
+          example: 12500
+        expense:
+          type: number
+          example: 4300.5
+        profit:
+          type: number
+          description: รายรับ − รายจ่าย (ขาดทุน = ติดลบ)
+          example: 8199.5
+
+    InvoiceSummary:
+      type: object
+      required: [id, invoice_no, issue_date, status, customer_name, total]
+      properties:
+        id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+          example: INV-2026-0001
+        issue_date:
+          type: string
+          format: date
+          example: "2026-10-31"
+        status:
+          type: string
+          enum: [issued, cancelled]
+        customer_name:
+          type: string
+          example: บริษัท ลูกค้า จำกัด
+        total:
+          type: number
+          example: 107
+
+    Invoice:
+      type: object
+      required: [id, invoice_no, issue_date, status, seller_name, seller_address, seller_tax_id, seller_branch, seller_phone,
+        customer_name, customer_address, customer_tax_id, customer_branch, note, subtotal, vat, total, items]
+      properties:
+        id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+          example: INV-2026-0001
+        issue_date:
+          type: string
+          format: date
+          example: "2026-10-31"
+        status:
+          type: string
+          enum: [issued, cancelled]
+        seller_name:
+          type: string
+          description: ข้อมูลผู้ขาย ณ วันที่ออกใบ
+          example: ร้านตัวอย่าง
+        seller_address:
+          type: string
+        seller_tax_id:
+          type: string
+          example: "0105555555555"
+        seller_branch:
+          type: string
+          example: สำนักงานใหญ่
+        seller_phone:
+          type: string
+        customer_name:
+          type: string
+          example: บริษัท ลูกค้า จำกัด
+        customer_address:
+          type: string
+        customer_tax_id:
+          type: string
+        customer_branch:
+          type: string
+        note:
+          type: string
+        subtotal:
+          type: number
+          description: ยอดรวมก่อน VAT
+          example: 100
+        vat:
+          type: number
+          description: VAT 7% ของยอดรวมทั้งใบ
+          example: 7
+        total:
+          type: number
+          description: ยอดรวมสุทธิ
+          example: 107
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvoiceItem"
+
+    InvoiceItem:
+      type: object
+      required: [id, product_id, name, unit, quantity, unit_price, amount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: ชื่อสินค้า ณ วันที่ออกใบ
+          example: กาแฟเย็น
+        unit:
+          type: string
+          example: แก้ว
+        quantity:
+          type: integer
+          example: 2
+        unit_price:
+          type: number
+          example: 50
+        amount:
+          type: number
+          description: quantity × unit_price
+          example: 100
+
+    InvoiceRequest:
+      type: object
+      required: [issue_date, customer_name, items]
+      properties:
+        issue_date:
+          type: string
+          format: date
+          example: "2026-10-31"
+        customer_name:
+          type: string
+          example: บริษัท ลูกค้า จำกัด
+        customer_address:
+          type: string
+          example: 99 ถนนพหลโยธิน กรุงเทพฯ 10400
+        customer_tax_id:
+          type: string
+          description: ตัวเลข 13 หลัก (ว่างได้)
+          example: "0105555555555"
+        customer_branch:
+          type: string
+          example: สำนักงานใหญ่
+        note:
+          type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/InvoiceItemRequest"
+
+    InvoiceItemRequest:
+      type: object
+      required: [product_id, quantity, unit_price]
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+        unit_price:
+          type: number
+          minimum: 0
+          description: ราคาต่อหน่วย ก่อน VAT
+          example: 50
+
+    Dashboard:
+      type: object
+      required: [month, income, expense, profit, invoice_count, invoice_total, product_count, low_stock_count, low_stock]
+      properties:
+        month:
+          type: string
+          example: "2026-10"
+        income:
+          type: number
+          example: 12500
+        expense:
+          type: number
+          example: 4300.5
+        profit:
+          type: number
+          example: 8199.5
+        invoice_count:
+          type: integer
+          description: จำนวนใบกำกับที่ยังไม่ยกเลิกของเดือน
+          example: 8
+        invoice_total:
+          type: number
+          example: 10700
+        product_count:
+          type: integer
+          example: 24
+        low_stock_count:
+          type: integer
+          description: จำนวนสินค้าใกล้หมดทั้งหมด
+          example: 3
+        low_stock:
+          type: array
+          description: สินค้าใกล้หมด ไม่เกิน 5 ตัว (เหลือน้อยสุดก่อน)
+          items:
+            $ref: "#/components/schemas/LowStockItem"
+
+    LowStockItem:
+      type: object
+      required: [product_id, name, unit, stock, min_stock]
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: กาแฟเย็น
+        unit:
+          type: string
+          example: แก้ว
+        stock:
+          type: integer
+          example: 2
+        min_stock:
+          type: integer
+          example: 5

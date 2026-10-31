@@ -16,7 +16,10 @@ description: กฎเขียนโค้ด Go แบบเรียบง่
 
 ## ทำ
 
-- ใช้ Go standard library ก่อนเสมอ (`net/http`, `encoding/json`, `testing`, `log/slog`)
+- ใช้ **Gin** สำหรับ router, อ่าน / ตอบ JSON, middleware — นอกนั้นใช้ Go standard library ก่อนเสมอ (`testing`, `log/slog`, `os`)
+- handler รับ `c *gin.Context` → อ่าน JSON ด้วย `c.ShouldBindJSON(&req)`, อ่าน path ด้วย `c.Param("id")`, ตอบด้วย `c.JSON(status, data)`
+- ตอบ error ด้วย `helpers.WriteError(c, status, code)` / `helpers.ServerError(c, err)` เท่านั้น
+- ส่ง `c.Request.Context()` ให้ repository (ไม่ส่ง `c` ทั้งก้อน)
 - ฟังก์ชันละ 1 หน้าที่ ยาวไม่เกินประมาณ 30 บรรทัด
 - เช็ค error ทันทีแบบ Go: `if err != nil { return ... }` แล้ว return เร็ว ไม่ซ้อน `if`
 - ซ้อนกัน (nesting) ไม่เกิน 3 ชั้น
@@ -33,12 +36,14 @@ description: กฎเขียนโค้ด Go แบบเรียบง่
 
 ## ห้าม
 
-- ห้ามใช้ web framework (Gin, Echo, Fiber) และ ORM (GORM)
+- ห้ามใช้ web framework ตัวอื่นนอกจาก Gin (Echo, Fiber, Chi) และ ORM (GORM)
+- ห้ามใช้ `binding` tag / validator ของ Gin (`binding:"required"`) → เช็คใน `Validate()` แทน เพื่อคืน error code ของเราเอง
+- ห้ามส่ง `*gin.Context` เข้า repository, logic หรือ utils
 - ห้ามใช้ code generation (sqlc, wire, mockgen)
 - ห้ามเพิ่มชั้นแบบ Clean Architecture (service, usecase, entity, dto แยก) — ใช้แค่ `handler → repository`
 - ห้ามสร้าง interface ถ้าไม่ได้ใช้ใน test (ตอนนี้มีแค่ `Repository` ของแต่ละ feature)
 - ห้ามใช้ generics ถ้ายังใช้ไม่ถึง 3 ที่
-- ห้ามใช้ goroutine / channel เอง (`net/http` แยก request ให้อยู่แล้ว)
+- ห้ามใช้ goroutine / channel เอง (Gin แยก request ให้อยู่แล้ว)
 - ห้ามใช้ `panic` และ `init()` — คืน error แทน
 - ห้ามใช้ตัวแปร global ที่เปลี่ยนค่าได้ (ใช้ได้แค่ `const` และ `var ErrXxx = errors.New(...)`)
 - ห้ามต่อ string เป็น SQL (`"... WHERE id = '" + id + "'"`) → โดน SQL injection
@@ -50,31 +55,31 @@ description: กฎเขียนโค้ด Go แบบเรียบง่
 
 ```go
 // ❌ if ซ้อนกัน อ่านยาก
-func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	product, err := h.repo.FindByID(r.Context(), r.PathValue("id"))
+func (h *Handler) Get(c *gin.Context) {
+	product, err := h.repo.FindByID(c.Request.Context(), c.Param("id"))
 	if err == nil {
-		helpers.WriteJSON(w, http.StatusOK, product)
+		c.JSON(http.StatusOK, product)
 	} else {
 		if errors.Is(err, ErrNotFound) {
-			helpers.WriteError(w, http.StatusNotFound, "product_not_found")
+			helpers.WriteError(c, http.StatusNotFound, "product_not_found")
 		} else {
-			helpers.ServerError(w, err)
+			helpers.ServerError(c, err)
 		}
 	}
 }
 
 // ✅ เช็ค error ก่อน แล้ว return เร็ว
-func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	product, err := h.repo.FindByID(r.Context(), r.PathValue("id"))
+func (h *Handler) Get(c *gin.Context) {
+	product, err := h.repo.FindByID(c.Request.Context(), c.Param("id"))
 	if errors.Is(err, ErrNotFound) {
-		helpers.WriteError(w, http.StatusNotFound, "product_not_found")
+		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
 		return
 	}
 	if err != nil {
-		helpers.ServerError(w, err)
+		helpers.ServerError(c, err)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, product)
+	c.JSON(http.StatusOK, product)
 }
 ```
 

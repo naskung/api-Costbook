@@ -15,7 +15,7 @@ Backend ของ CostBook: คำนวณต้นทุนสินค้า,
 - เขียน / แก้โค้ดเสร็จ → ใช้ skill `unit-test-check` ก่อนบอกว่างานเสร็จ
 - ทำงานเสร็จ → อัปเดต `PROGRESS.md` (ติ๊ก checklist + เพิ่มบรรทัดในบันทึกการทำงาน)
 - โครงสร้าง: `handler → repository → PostgreSQL`, คำนวณอยู่ใน `utils` / `logic.go`, ไม่มีชั้น service
-- ใช้ Go standard library ก่อนเสมอ จะเพิ่ม package ใหม่ → ถามผู้ใช้ก่อน
+- web framework ใช้ **Gin** ส่วนอื่นใช้ Go standard library ก่อนเสมอ จะเพิ่ม package ใหม่ → ถามผู้ใช้ก่อน
 - JSON `snake_case` ตรงกับ model ฝั่ง Flutter, error ตอบเป็น `{"error": "code"}`
 - แก้ API ที่กระทบ Flutter → แจ้งผู้ใช้ และบันทึกใน `PROGRESS.md` ของทั้ง 2 repo
 - ตอบผู้ใช้เป็นภาษาไทย

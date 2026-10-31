@@ -29,11 +29,12 @@
 
 พื้นฐาน API (รอคำสั่ง):
 
+- [ ] เพิ่ม package `github.com/gin-gonic/gin` (ผู้ใช้อนุมัติแล้ว — เพิ่มตอนเริ่มเขียน router)
 - [ ] `cmd/api/main.go` เปิด server
 - [ ] `config` อ่าน `PORT`, `ALLOWED_ORIGIN` + test
-- [ ] `router` + `GET /api/v1/health` + test
-- [ ] `middleware/cors.go` + test
-- [ ] `helpers`: `WriteJSON`, `WriteError`, `ServerError` + test
+- [ ] `router` (Gin) + `GET /api/v1/health` + `NoRoute` ตอบ 404 `not_found` + test
+- [ ] `middleware/cors.go` (Gin middleware) + test
+- [ ] `helpers`: `WriteError`, `ServerError` + test (ตอบสำเร็จใช้ `c.JSON` ของ Gin)
 - [ ] `utils`: `Round2`, `VAT`, `TotalWithVAT`, `PriceBeforeVAT`, `CostPerUnit`, `SellPrice` + test
 
 ## Phase 2 — ฐานข้อมูล (รอคำสั่ง)
@@ -62,14 +63,13 @@
 
 - [ ] login: `users` + bcrypt + JWT
 - [ ] `middleware/auth.go` ป้องกันทุก route ยกเว้น health และ login
-- [ ] `middleware/logger.go` (log/slog)
 - [ ] จำกัดขนาด request body
 - [ ] (ไม่บังคับ) integration test ของ repository กับ DB จริง
 
 ## Phase 5 — Deploy (รอคำสั่ง)
 
 - [ ] เลือกที่ deploy API + DB
-- [ ] ตั้งค่า environment variable บน server (`ALLOWED_ORIGIN` = โดเมนเว็บจริง)
+- [ ] ตั้งค่า environment variable บน server (`ALLOWED_ORIGIN` = โดเมนเว็บจริง, `GIN_MODE=release`)
 - [ ] HTTPS
 - [ ] สำรองข้อมูล DB อัตโนมัติ
 
@@ -77,6 +77,7 @@
 
 ## เรื่องที่ยังต้องตัดสินใจ
 
+- [x] web framework → **Gin** (ตัดสินใจ 2026-10-31)
 - [ ] ใช้ฐานข้อมูลตัวไหน (ค่าเริ่มต้นใน docs: PostgreSQL)
 - [ ] deploy API และ DB ที่ไหน (เช่น Railway / Render / Fly.io / VPS + Neon / Supabase สำหรับ DB)
 - [ ] ผู้ใช้คนเดียว หรือหลายคน / หลายบริษัท
@@ -90,5 +91,6 @@
 
 | วันที่ | ทำอะไร | หมายเหตุ |
 |---|---|---|
+| 2026-10-31 | เปลี่ยนจาก `net/http` เป็น **Gin**: แก้ `docs/ARCHITECTURE.md`, `CLAUDE.md`, skill `simple-code` / `unit-test-check` และแผน Phase 1 (ตัด `WriteJSON` ใช้ `c.JSON` แทน, เพิ่ม `RegisterRoutes`, `NoRoute`) และ Phase 4 (ตัด `middleware/logger.go` เพราะ `gin.Default()` มี logger แล้ว) | ยังไม่ได้เพิ่ม package / ยังไม่มีโค้ด — ไม่กระทบ Flutter (path และ JSON เหมือนเดิม) |
 | 2026-10-31 | ลบโค้ด Go ทั้งหมดออก (main, config, router, health, CORS, helpers, utils และ test) เหลือแค่เอกสาร + โครงโฟลเดอร์เปล่า | ผู้ใช้จะสั่งทำ API ทีละส่วนเอง |
 | 2026-10-31 | สร้างเอกสาร + skill และโครงโปรเจกต์ Go: config, router, health, CORS, helpers, utils พร้อม unit test | ภายหลังลบโค้ดออก (ดูบรรทัดบน) |

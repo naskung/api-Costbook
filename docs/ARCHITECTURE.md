@@ -17,20 +17,21 @@ Flutter Web ──HTTP request──▶ Go API ──SQL──▶ PostgreSQL
 
 | สิ่งที่ต้องมี | คืออะไร (ภาษาง่าย) | ในโปรเจกต์นี้ใช้ | Phase |
 |---|---|---|---|
-| HTTP server | โปรแกรมที่เปิดรอรับ request ที่ port หนึ่ง | `net/http` (มากับ Go) | 1 |
-| Router | จับคู่ "method + URL" กับฟังก์ชันที่จะทำงาน | `http.ServeMux` (มากับ Go) | 1 |
-| JSON | รูปแบบข้อมูลที่ส่งไปกลับกับ Flutter | `encoding/json` (มากับ Go) | 1 |
+| Web framework | ชุดเครื่องมือสำเร็จรูปสำหรับทำ API: เปิด server, router, อ่าน / ตอบ JSON, middleware | **Gin** (`github.com/gin-gonic/gin`) | 1 |
+| HTTP server | โปรแกรมที่เปิดรอรับ request ที่ port หนึ่ง | `r.Run(":8080")` ของ Gin (ข้างในใช้ `net/http`) | 1 |
+| Router | จับคู่ "method + URL" กับฟังก์ชันที่จะทำงาน | `r.GET(...)`, `r.POST(...)` ของ Gin | 1 |
+| JSON | รูปแบบข้อมูลที่ส่งไปกลับกับ Flutter | `c.ShouldBindJSON` (อ่าน) / `c.JSON` (ตอบ) ของ Gin | 1 |
 | CORS | อนุญาตให้เว็บที่อยู่คนละ port / โดเมนเรียก API ได้ ถ้าไม่มี browser จะบล็อก | `middleware/cors.go` | 1 |
 | Error format | ตอบ error แบบเดียวกันทุกที่ Flutter อ่านง่าย | `{"error": "code"}` | 1 |
 | Config | ค่าที่ต่างกันแต่ละเครื่อง (port, รหัส DB) อ่านจาก environment variable ไม่เขียนลงโค้ด | `config/config.go` | 1 |
-| Unit test | test อัตโนมัติ เช็คว่าโค้ดยังถูกอยู่ | `testing` + `httptest` (มากับ Go) | 1 และทุก Phase |
+| Unit test | test อัตโนมัติ เช็คว่าโค้ดยังถูกอยู่ | `testing` + `httptest` (มากับ Go) + `gin.TestMode` | 1 และทุก Phase |
 | Database | ที่เก็บข้อมูลถาวร | PostgreSQL + `pgx` | 2 |
 | Migration | ไฟล์ SQL สร้าง / แก้ตาราง เรียงตามลำดับ ทุกเครื่องได้ตารางเหมือนกัน | `golang-migrate` | 2 |
 | Handler | ฟังก์ชันที่รับ request แล้วตอบกลับ (1 endpoint = 1 ฟังก์ชัน) | `features/*/handler.go` | 3 |
 | Validation | เช็คข้อมูลที่ส่งมาก่อนบันทึก เช่น ชื่อห้ามว่าง ราคาห้ามติดลบ | `Validate()` ใน model | 3 |
 | DB Transaction | หลายคำสั่ง SQL ต้องสำเร็จพร้อมกัน หรือยกเลิกทั้งหมด (เช่น ออกใบกำกับ + ตัด stock) | `pgx` Begin / Commit | 3 |
 | Auth | login และเช็คว่าใครเรียก API | JWT + bcrypt | 4 |
-| Logging | พิมพ์ว่ามี request อะไรเข้ามา ไว้หาจุดผิด | `log/slog` (มากับ Go) | 4 |
+| Logging | พิมพ์ว่ามี request อะไรเข้ามา ไว้หาจุดผิด | log ของ request: มากับ `gin.Default()` / log ของ error: `log/slog` (มากับ Go) | 1 |
 | Deploy | เอา API ขึ้น server จริง + HTTPS + สำรองข้อมูล | ยังไม่เลือก | 5 |
 
 ---
@@ -43,7 +44,7 @@ Flutter Web ──HTTP request──▶ Go API ──SQL──▶ PostgreSQL
 | PostgreSQL | ยังไม่มี (Phase 2) | `brew install postgresql@17` แล้ว `brew services start postgresql@17` |
 | golang-migrate | ยังไม่มี (Phase 2) | `brew install golang-migrate` |
 | ตัวยิง API ทดสอบ | มี `curl` แล้ว | หรือใช้ Postman / Bruno ถ้าอยากได้หน้าจอ |
-| ตัวดูข้อมูลใน DB | ไม่บังคับ | TablePlus หรือ DBeaver |
+| ตัวดูข้อมูลใน DB | มีแล้ว (DBeaver) | — |
 | VS Code extension | แนะนำ | "Go" (ของทีม Go) — จัดรูปแบบโค้ดและรัน test ได้ในตัว |
 
 ---
@@ -52,14 +53,18 @@ Flutter Web ──HTTP request──▶ Go API ──SQL──▶ PostgreSQL
 
 | Package | ใช้ทำอะไร | Phase |
 |---|---|---|
-| Go standard library | server, router, JSON, test, log | 1 |
+| `github.com/gin-gonic/gin` | web framework: server, router, อ่าน / ตอบ JSON, middleware | 1 |
+| Go standard library | test, log error, อ่าน environment variable และอื่น ๆ | 1 |
 | `github.com/jackc/pgx/v5` | ต่อ PostgreSQL | 2 |
 | `golang-migrate` (CLI ไม่ใช่ package) | รันไฟล์ migration | 2 |
 | `github.com/golang-jwt/jwt/v5` | token สำหรับ login | 4 |
 | `golang.org/x/crypto/bcrypt` | เข้ารหัสรหัสผ่าน | 4 |
 
-**ไม่ใช้:** Gin / Echo / Fiber, GORM (ORM), sqlc, wire, testify
-เหตุผล: Go 1.22 ขึ้นไป `net/http` ทำ router ได้เองแล้ว ใช้ของมาตรฐานจะเรียนรู้น้อยกว่า และอ่าน SQL ตรง ๆ เข้าใจง่ายกว่า ORM
+**ใช้ Gin** (ผู้ใช้เลือก 2026-10-31) เพราะคนใช้เยอะที่สุดใน Go หาตัวอย่าง / บทความ / วิดีโอสอนได้ง่าย
+ใช้แค่ router, อ่าน / ตอบ JSON, middleware — **ไม่ใช้** `binding` tag / validator ของ Gin (ใช้ `Validate()` ของเราเอง เพื่อคืน error code ตามที่ Flutter ใช้)
+
+**ไม่ใช้:** Echo / Fiber / Chi, GORM (ORM), sqlc, wire, testify
+เหตุผล: ใช้ framework ตัวเดียวพอ และอ่าน SQL ตรง ๆ เข้าใจง่ายกว่า ORM
 
 ---
 
@@ -71,9 +76,9 @@ api-Costbook/
 ├── internal/                 (Go ไม่ให้โปรเจกต์อื่น import โค้ดในนี้)
 │   ├── config/               อ่านค่าจาก environment variable
 │   ├── database/             เชื่อมต่อ PostgreSQL (Phase 2)
-│   ├── router/               รวม route ทั้งหมดไว้ที่เดียว
-│   ├── middleware/           ทำงานก่อนทุก request: cors, logger, auth
-│   ├── helpers/              ช่วยงาน HTTP: WriteJSON, WriteError, ServerError
+│   ├── router/               สร้าง Gin router + รวม route ทั้งหมดไว้ที่เดียว
+│   ├── middleware/           ทำงานก่อนทุก request: cors, auth (logger มากับ gin.Default() แล้ว)
+│   ├── helpers/              ช่วยตอบ error: WriteError, ServerError (ตอบสำเร็จใช้ c.JSON ของ Gin)
 │   ├── utils/                ฟังก์ชันคำนวณล้วน ๆ: money, tax, cost
 │   └── features/
 │       ├── company/
@@ -81,7 +86,7 @@ api-Costbook/
 │       │   ├── model.go           struct + Validate()
 │       │   ├── model_test.go
 │       │   ├── repository.go      คุยกับ DB (interface + Postgres)
-│       │   ├── handler.go         รับ request / ตอบ JSON
+│       │   ├── handler.go         รับ request / ตอบ JSON + RegisterRoutes (ต่อ route ของ feature)
 │       │   ├── handler_test.go    test ด้วย fakeRepository (ไม่ต้องมี DB)
 │       │   ├── logic.go           (ถ้ามี) คำนวณเฉพาะ feature นี้
 │       │   └── logic_test.go
@@ -113,17 +118,17 @@ api-Costbook/
 ## 5. การไหลของข้อมูล
 
 ```
-Request → middleware (cors, auth) → router → handler ──▶ repository ──▶ PostgreSQL
-                                              │
-                                              └─▶ Validate() / logic / utils (คำนวณ)
+Request → Gin (logger, recovery) → middleware (cors, auth) → handler ──▶ repository ──▶ PostgreSQL
+                                                                │
+                                                                └─▶ Validate() / logic / utils (คำนวณ)
 ```
 
 | ชั้น | ทำ | ห้ามทำ |
 |---|---|---|
-| handler | อ่าน JSON, เรียก `Validate()`, เรียก repository, ตอบ JSON + status | เขียน SQL |
+| handler | รับ `*gin.Context`, อ่าน JSON, เรียก `Validate()`, เรียก repository, ตอบ JSON + status | เขียน SQL |
 | model | struct + `Validate()` | เรียก DB |
-| logic / utils | คำนวณ | แตะ HTTP หรือ DB |
-| repository | SQL และ transaction | รู้จัก `http.Request` |
+| logic / utils | คำนวณ | แตะ HTTP, Gin หรือ DB |
+| repository | SQL และ transaction รับ `context.Context` (handler ส่ง `c.Request.Context()` มา) | รู้จัก `gin.Context` หรือ `http.Request` |
 
 ไม่มีชั้น service แยก — ถ้า feature ไหนต้องทำหลายขั้นใน DB (เช่น ออกใบกำกับ) ให้ทำใน repository ภายใน transaction เดียว
 
@@ -137,21 +142,22 @@ Request → middleware (cors, auth) → router → handler ──▶ repository 
 - เงิน: DB เก็บเป็น `NUMERIC(12,2)` ส่วนใน Go ใช้ `float64` และปัดด้วย `utils.Round2` ทุกครั้งที่คำนวณเสร็จ
 - วันที่ `"2026-10-31"`, วันเวลา `"2026-10-31T10:00:00Z"`
 - รายการว่างต้องตอบ `[]` ไม่ใช่ `null` → สร้าง slice ด้วย `products := []Product{}`
-- สำเร็จ: ตอบข้อมูลตรง ๆ (object หรือ array) ไม่ห่อด้วย `{"data": ...}`
+- สำเร็จ: ตอบข้อมูลตรง ๆ (object หรือ array) ด้วย `c.JSON(status, data)` ไม่ห่อด้วย `{"data": ...}`
 - error: `{"error": "product_name_required"}` — เป็น **code ภาษาอังกฤษ** ฝั่ง Flutter แปลเป็นข้อความด้วย `'error.<code>'.tr`
+  - ตอบ error ผ่าน `helpers.WriteError(c, status, code)` เสมอ (ข้างในใช้ `c.AbortWithStatusJSON` → ใช้ได้ทั้งใน handler และ middleware)
 
 | Method | ใช้ทำ | status เมื่อสำเร็จ |
 |---|---|---|
 | GET | อ่าน | 200 |
 | POST | สร้าง | 201 |
 | PUT | แก้ไข | 200 |
-| DELETE | ลบ | 204 (ไม่มี body) |
+| DELETE | ลบ | 204 (ไม่มี body) → `c.Status(http.StatusNoContent)` |
 
 | status error | เมื่อไหร่ | ตัวอย่าง code |
 |---|---|---|
 | 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `product_name_required` |
 | 401 | ยังไม่ login | `unauthorized` |
-| 404 | ไม่เจอข้อมูล | `product_not_found` |
+| 404 | ไม่เจอข้อมูล / ไม่มี path นี้ | `product_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
 | 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `product_in_use` |
 | 500 | server พัง | `server_error` (ใช้ `helpers.ServerError` → error จริงลง log ไม่ส่งให้ client) |
 
@@ -188,6 +194,8 @@ Request → middleware (cors, auth) → router → handler ──▶ repository 
 | dashboard | `GET /api/v1/dashboard?month=2026-10` | ตัวเลขสรุปหน้าแรก |
 | auth (Phase 4) | `POST /api/v1/auth/login` | login ได้ token |
 | | `GET /api/v1/auth/me` | ข้อมูลผู้ใช้ที่ login อยู่ |
+
+ในตารางเขียน path แบบ `{id}` แต่ในโค้ด Gin เขียนเป็น `:id` เช่น `api.GET("/products/:id", ...)` แล้วอ่านค่าด้วย `c.Param("id")`
 
 ---
 
@@ -323,62 +331,79 @@ func NewHandler(repo Repository) *Handler {
 	return &Handler{repo: repo}
 }
 
-// List GET /api/v1/products
-func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	products, err := h.repo.List(r.Context())
-	if err != nil {
-		helpers.ServerError(w, err)
-		return
-	}
-	helpers.WriteJSON(w, http.StatusOK, products)
+// RegisterRoutes ต่อ route ของสินค้าเข้ากับกลุ่ม /api/v1
+// router.go และ handler_test.go เรียกใช้ฟังก์ชันนี้ร่วมกัน → test ยิง path เดียวกับของจริง
+func (h *Handler) RegisterRoutes(api gin.IRouter) {
+	api.GET("/products", h.List)
+	api.GET("/products/:id", h.Get)
+	api.POST("/products", h.Create)
 }
 
-// Get GET /api/v1/products/{id}
-func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+// List GET /api/v1/products
+func (h *Handler) List(c *gin.Context) {
+	products, err := h.repo.List(c.Request.Context())
+	if err != nil {
+		helpers.ServerError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, products)
+}
 
-	product, err := h.repo.FindByID(r.Context(), id)
+// Get GET /api/v1/products/:id
+func (h *Handler) Get(c *gin.Context) {
+	id := c.Param("id")
+
+	product, err := h.repo.FindByID(c.Request.Context(), id)
 	if errors.Is(err, ErrNotFound) {
-		helpers.WriteError(w, http.StatusNotFound, "product_not_found")
+		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
 		return
 	}
 	if err != nil {
-		helpers.ServerError(w, err)
+		helpers.ServerError(c, err)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusOK, product)
+	c.JSON(http.StatusOK, product)
 }
 
 // Create POST /api/v1/products
-func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Create(c *gin.Context) {
 	var req ProductRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
+	err := c.ShouldBindJSON(&req)
 	if err != nil {
-		helpers.WriteError(w, http.StatusBadRequest, "invalid_json")
+		helpers.WriteError(c, http.StatusBadRequest, "invalid_json")
 		return
 	}
 
 	code := req.Validate()
 	if code != "" {
-		helpers.WriteError(w, http.StatusBadRequest, code)
+		helpers.WriteError(c, http.StatusBadRequest, code)
 		return
 	}
 
-	product, err := h.repo.Create(r.Context(), req)
+	product, err := h.repo.Create(c.Request.Context(), req)
 	if err != nil {
-		helpers.ServerError(w, err)
+		helpers.ServerError(c, err)
 		return
 	}
-	helpers.WriteJSON(w, http.StatusCreated, product)
+	c.JSON(http.StatusCreated, product)
 }
 ```
 
 ```go
-// internal/router/router.go — ต่อ route ของ feature
+// internal/router/router.go — สร้าง router และต่อ route ของทุก feature
+r := gin.Default() // มี Logger (พิมพ์ทุก request) + Recovery (โค้ด panic แล้ว server ไม่ล่ม) ให้แล้ว
+r.Use(middleware.CORS(cfg.AllowedOrigin))
+r.NoRoute(func(c *gin.Context) {
+	helpers.WriteError(c, http.StatusNotFound, "not_found") // path ที่ไม่มี ก็ตอบ JSON แบบเดียวกับ error อื่น
+})
+
+api := r.Group("/api/v1")
+api.GET("/health", func(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok"}) // gin.H คือ map ไว้สร้าง JSON สั้น ๆ
+})
+
 productHandler := product.NewHandler(product.NewPostgresRepository(db))
-mux.HandleFunc("GET /api/v1/products", productHandler.List)
-mux.HandleFunc("GET /api/v1/products/{id}", productHandler.Get)
-mux.HandleFunc("POST /api/v1/products", productHandler.Create)
+productHandler.RegisterRoutes(api)
 ```
 
 ---
@@ -407,6 +432,7 @@ mux.HandleFunc("POST /api/v1/products", productHandler.Create)
 ## 11. Unit Test
 
 - `go test ./...` ต้องรันได้ **โดยไม่ต้องมี DB** — handler test ใช้ `fakeRepository` แทน
+- handler test สร้าง Gin router ใน test (`gin.TestMode`) + `RegisterRoutes` แล้วยิง request ด้วย `httptest`
 - ไฟล์ test อยู่ข้างไฟล์จริง: `tax.go` → `tax_test.go`
 - เขียนแบบ table-driven (ตาราง input → ผลที่ต้องได้)
 - อะไรต้องมี test และแม่แบบ: ดู `.claude/skills/unit-test-check/SKILL.md`
@@ -435,6 +461,7 @@ mux.HandleFunc("POST /api/v1/products", productHandler.Create)
 | `PORT` | `8080` | port ที่ API เปิดรอ |
 | `ALLOWED_ORIGIN` | `*` | เว็บที่อนุญาตให้เรียก API — ตอนพัฒนาใช้ `*` ได้ ขึ้น server จริงต้องใส่โดเมนเว็บ |
 | `DATABASE_URL` | (Phase 2) | เช่น `postgres://postgres:postgres@localhost:5432/costbook?sslmode=disable` |
+| `GIN_MODE` | `debug` | Gin อ่านค่านี้เอง ไม่ต้องเขียนใน config — ตอนพัฒนาไม่ต้องตั้ง (Gin จะพิมพ์ข้อความ debug ให้ดู) ขึ้น server จริงตั้งเป็น `release` |
 
 ตัวอย่าง: `PORT=9000 go run ./cmd/api`
 รหัสผ่าน / secret ห้ามเขียนในโค้ด และห้าม commit ไฟล์ `.env` (อยู่ใน `.gitignore` แล้ว)

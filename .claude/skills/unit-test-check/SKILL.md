@@ -41,13 +41,15 @@ description: ตรวจสอบ unit test ของ CostBook API (Go) — ร
 | `features/*/model.go` | บังคับ ถ้ามี `Validate()` | ข้อมูลถูก → `""`, ข้อมูลผิดแต่ละแบบ → code ที่ถูก |
 | `features/*/logic.go` | บังคับ | ทุกฟังก์ชันคำนวณ |
 | `features/*/handler.go` | บังคับ | สำเร็จ, JSON ผิด (400), validate ไม่ผ่าน (400), ไม่เจอ (404), DB พัง (500) |
-| `internal/router/router.go` | บังคับ | route มีอยู่จริง และ method ผิดได้ 405 |
+| `internal/router/router.go` | บังคับ | route มีอยู่จริง และ path ที่ไม่มีได้ 404 `{"error":"not_found"}` |
 | `features/*/repository.go` | ไม่ใช่ unit test | ต้องมี DB จริง → integration test (Phase 4, ไม่บังคับ) |
 | `cmd/api/main.go` | ไม่ต้อง | — |
 
 ## กฎการเขียน test
 
-- ใช้แค่ `testing` + `net/http/httptest` (มากับ Go) ไม่ใช้ testify / gomock
+- ใช้แค่ `testing` + `net/http/httptest` (มากับ Go) + Gin ไม่ใช้ testify / gomock
+- test ที่ใช้ Gin เรียก `gin.SetMode(gin.TestMode)` ก่อนสร้าง router (ปิดข้อความ debug ของ Gin)
+- handler test ยิงผ่าน router ที่ต่อด้วย `RegisterRoutes` ของ feature นั้น ไม่เรียก handler ตรง ๆ
 - `go test ./...` ต้องรันได้ **โดยไม่ต้องมี DB และไม่ต้องต่อเน็ต** → handler ใช้ `fakeRepository`
 - ฟังก์ชันที่มีหลายกรณี เขียนแบบ table-driven + `t.Run`
 - ชื่อกรณีเป็นภาษาไทย บอกผลที่ต้องได้ เช่น `"100 บาท ได้ VAT 7 บาท"`
@@ -134,6 +136,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 // fakeRepository ฐานข้อมูลปลอม เก็บข้อมูลใน slice ใช้แทน Postgres ตอน test
@@ -167,13 +171,21 @@ func (f *fakeRepository) Create(ctx context.Context, req ProductRequest) (Produc
 	return p, nil
 }
 
+// newTestRouter สร้าง Gin router สำหรับ test: route เหมือนของจริง แต่ใช้ fakeRepository แทน DB
+func newTestRouter(repo Repository) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	NewHandler(repo).RegisterRoutes(r.Group("/api/v1"))
+	return r
+}
+
 func TestHandler_List(t *testing.T) {
 	repo := &fakeRepository{products: []Product{{ID: "1", Name: "กาแฟ"}}}
-	handler := NewHandler(repo)
+	router := newTestRouter(repo)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/products", nil)
 	rec := httptest.NewRecorder()
-	handler.List(rec, req)
+	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, ต้องได้ %d", rec.Code, http.StatusOK)
@@ -186,11 +198,11 @@ func TestHandler_List(t *testing.T) {
 }
 
 func TestHandler_List_DBError(t *testing.T) {
-	handler := NewHandler(&fakeRepository{err: errors.New("db down")})
+	router := newTestRouter(&fakeRepository{err: errors.New("db down")})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/products", nil)
 	rec := httptest.NewRecorder()
-	handler.List(rec, req)
+	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, ต้องได้ %d", rec.Code, http.StatusInternalServerError)
@@ -198,12 +210,11 @@ func TestHandler_List_DBError(t *testing.T) {
 }
 
 func TestHandler_Get_NotFound(t *testing.T) {
-	handler := NewHandler(&fakeRepository{})
+	router := newTestRouter(&fakeRepository{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/products/999", nil)
-	req.SetPathValue("id", "999") // เรียก handler ตรง ไม่ผ่าน router จึงต้องใส่ path value เอง
 	rec := httptest.NewRecorder()
-	handler.Get(rec, req)
+	router.ServeHTTP(rec, req) // ผ่าน router → c.Param("id") ได้ "999" เอง
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, ต้องได้ %d", rec.Code, http.StatusNotFound)
@@ -223,11 +234,11 @@ func TestHandler_Create(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := NewHandler(&fakeRepository{})
+			router := newTestRouter(&fakeRepository{})
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/products", strings.NewReader(tt.body))
 			rec := httptest.NewRecorder()
-			handler.Create(rec, req)
+			router.ServeHTTP(rec, req)
 
 			if rec.Code != tt.wantStatus {
 				t.Errorf("status = %d, ต้องได้ %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
@@ -242,14 +253,16 @@ func TestHandler_Create(t *testing.T) {
 ```go
 // internal/middleware/cors_test.go
 func TestCORS_OptionsRequest(t *testing.T) {
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(CORS("http://localhost:3000"))
+	r.OPTIONS("/api/v1/products", func(c *gin.Context) {
 		t.Error("OPTIONS ไม่ควรถูกส่งต่อไปที่ handler")
 	})
-	handler := CORS("http://localhost:3000", next)
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/products", nil)
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	r.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("status = %d, ต้องได้ %d", rec.Code, http.StatusNoContent)

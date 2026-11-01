@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 
+	"github.com/naskung/api-Costbook/internal/features/category"
 	"github.com/naskung/api-Costbook/internal/features/company"
 	"github.com/naskung/api-Costbook/internal/features/cost"
 	"github.com/naskung/api-Costbook/internal/features/dashboard"
@@ -16,6 +17,7 @@ import (
 type ShopReader interface {
 	Company(ctx context.Context) (company.Company, error)
 	Fields(ctx context.Context) ([]field.ProductField, error)
+	Categories(ctx context.Context) ([]category.Category, error)
 	Products(ctx context.Context) ([]product.Product, error)
 	Product(ctx context.Context, id string) (product.Product, error)
 	CostSheet(ctx context.Context, productID string) (cost.CostSheet, error)
@@ -27,6 +29,7 @@ type ShopReader interface {
 type Shop struct {
 	CompanyRepo     company.Repository
 	FieldRepo       field.Repository
+	CategoryRepo    category.Repository
 	ProductRepo     product.Repository
 	CostRepo        cost.Repository
 	DashboardRepo   dashboard.Repository
@@ -39,6 +42,10 @@ func (s Shop) Company(ctx context.Context) (company.Company, error) {
 
 func (s Shop) Fields(ctx context.Context) ([]field.ProductField, error) {
 	return s.FieldRepo.List(ctx)
+}
+
+func (s Shop) Categories(ctx context.Context) ([]category.Category, error) {
+	return s.CategoryRepo.List(ctx)
 }
 
 func (s Shop) Products(ctx context.Context) ([]product.Product, error) {

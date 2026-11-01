@@ -93,6 +93,7 @@ api-Costbook/
 │       │   ├── logic.go           (ถ้ามี) คำนวณเฉพาะ feature นี้
 │       │   └── logic_test.go
 │       ├── field/            ช่องข้อมูลเพิ่มเติมของสินค้าที่ร้านตั้งเอง (ตาราง product_fields)
+│       ├── category/         หมวดหมู่สินค้า (ตาราง product_categories) สินค้าชี้หมวดด้วย category_id
 │       ├── cost/             ใบต้นทุนของสินค้า (ตาราง product_costs) → คำนวณ cost_price + รายการที่ใช้บ่อย (cost_presets)
 │       ├── stock/            คงเหลือ / รับเข้า (คิดต้นทุนเฉลี่ย) / เบิกออก (ตาราง stock_movements)
 │       ├── transaction/      รายรับ-รายจ่าย + สรุปรายเดือน
@@ -206,6 +207,10 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `POST /api/v1/product-fields` | เพิ่มช่อง |
 | | `PUT /api/v1/product-fields/{id}` | แก้ช่อง |
 | | `DELETE /api/v1/product-fields/{id}` | ลบช่อง (ค่าของช่องนี้ในทุกสินค้าหายไปด้วย) |
+| category ✅ | `GET /api/v1/product-categories` | หมวดหมู่สินค้า (เรียงตามชื่อ) + จำนวนสินค้าในแต่ละหมวด |
+| | `POST /api/v1/product-categories` | เพิ่มหมวด (ชื่อห้ามซ้ำ ไม่สนตัวพิมพ์เล็ก / ใหญ่ → 409 `category_name_taken`) |
+| | `PUT /api/v1/product-categories/{id}` | เปลี่ยนชื่อหมวด → สินค้าทุกตัวในหมวดเห็นชื่อใหม่ทันที |
+| | `DELETE /api/v1/product-categories/{id}` | ลบหมวด → สินค้าในหมวดกลายเป็นไม่มีหมวด (ไม่ลบสินค้า) |
 | cost ✅ | `GET /api/v1/products/{id}/costs` | ใบต้นทุน: รายการต้นทุน (วัตถุดิบ / ค่าแรง / ค่าใช้จ่ายอื่น) + จำนวนผลิตต่อรอบ + ต้นทุน / ราคาขายต่อชิ้น |
 | | `PUT /api/v1/products/{id}/costs` | บันทึกทั้งใบ (แทนที่รายการเดิมทั้งหมด) → คำนวณ `cost_price` ใหม่ + บันทึก `sell_price` |
 | | `GET /api/v1/cost-presets` | รายการต้นทุนที่ใช้บ่อย (เช่น เส้น PLA กรัมละ 0.45) ไว้เลือกใส่ใบต้นทุนเร็ว ๆ |
@@ -270,7 +275,9 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 
 - สินค้าใหม่ `stock = 0` — เพิ่มของผ่าน `POST /stock/in` เท่านั้น (`PUT /products/{id}` แก้ stock ไม่ได้)
 - ลบสินค้าที่เคยอยู่ในใบกำกับไม่ได้ → 409 `product_in_use` / ลบได้ → รายการต้นทุนและประวัติ stock หายไปด้วย
-- สินค้ามี `code` (รหัส / บาร์โค้ด ว่างได้ ถ้าใส่ห้ามซ้ำ → 409 `product_code_taken`), `category`, `description`, `track_stock`, `custom_fields`
+- สินค้ามี `code` (รหัส / บาร์โค้ด ว่างได้ ถ้าใส่ห้ามซ้ำ → 409 `product_code_taken`), `category_id` (หมวด ว่าง = ไม่มี, id ไม่มีจริง → 400 `product_category_invalid`) + `category` (ชื่อหมวด อ่านอย่างเดียว ได้จาก JOIN), `description`, `track_stock`, `custom_fields`
+- อ่าน / บันทึกสินค้าใช้ `products p LEFT JOIN product_categories c` — INSERT / UPDATE เขียนเป็น CTE `WITH p AS (... RETURNING *)` แล้ว SELECT พร้อมชื่อหมวด (`selectSaved`)
+- AI เสนอสินค้าด้วยชื่อหมวด → `toolbox.categoryID` หา id ให้ (ไม่มีหมวดชื่อนี้ = บอก AI ให้เลือกหมวดที่มี หรือให้ผู้ใช้เพิ่มหมวดก่อน AI สร้างหมวดเองไม่ได้)
 - `track_stock = false` (งานบริการ / งานสั่งทำ) → ไม่โชว์ในหน้าสต็อก ไม่เตือนใกล้หมด ขายได้ไม่จำกัด รับเข้า / เบิกออกไม่ได้ (409 `stock_not_tracked`)
 - **รูปสินค้า** 1 รูป (`000010_product_image`): เก็บใน DB แบบเดียวกับโลโก้ (ตรวจไฟล์ด้วย `helpers.ReadImage` ตัวเดียวกัน) / `image_version` = เวลาที่เปลี่ยนรูปล่าสุด (มิลลิวินาที, 0 = ไม่มีรูป) — `GET /products` ไม่ส่งตัวรูปมา ส่งแค่ `image_version`
   - Flutter โหลดรูปที่ `/products/{id}/image?v=<image_version>` พร้อม token → เปลี่ยนรูปแล้ว URL เปลี่ยน จึงให้ browser เก็บรูปไว้ได้นาน (`Cache-Control: private, max-age=31536000, immutable`)
@@ -389,7 +396,8 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | ตาราง | เก็บอะไร | column หลัก |
 |---|---|---|
 | `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type, vat_registered, prices_include_vat, use_cost_page (`000007`), ai_key (key ของ Claude แบบเข้ารหัส ว่าง = ไม่มี `000009_ai_key`) |
-| `products` | สินค้า (migration `000003_create_products`) | id, code (ห้ามซ้ำถ้าไม่ว่าง), name, category, description, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0), track_stock, custom_fields (`JSONB`), image (`BYTEA` ว่างได้) + image_content_type + image_version (`000010`) |
+| `products` | สินค้า (migration `000003_create_products`) | id, code (ห้ามซ้ำถ้าไม่ว่าง), name, category_id (→ `product_categories`, ลบหมวด = `NULL`, `000011` — เดิมเป็นข้อความ `category`), description, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0), track_stock, custom_fields (`JSONB`), image (`BYTEA` ว่างได้) + image_content_type + image_version (`000010`) |
+| `product_categories` | หมวดหมู่สินค้า (`000011_product_categories`, ชื่อห้ามซ้ำ `lower(btrim(name))`) | id, name |
 | `product_fields` | ช่องข้อมูลเพิ่มเติมที่ร้านตั้งเอง (`000007_flexible_shop`) | id, name, type (text / number / date / select), options (`TEXT[]`), show_in_list, sort_order |
 | `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), kind (fixed / percent), name, quantity, unit, unit_price, percent, amount |
 | `cost_presets` | รายการต้นทุนที่ใช้บ่อย (`000007`) | id, type, kind, name, unit, unit_price, percent |

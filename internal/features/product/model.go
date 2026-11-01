@@ -1,6 +1,10 @@
 package product
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/naskung/api-Costbook/internal/utils"
+)
 
 // ความยาวสูงสุดของช่องเพิ่มเติม กันข้อมูลใหญ่ผิดปกติ
 const (
@@ -12,11 +16,13 @@ const (
 // stock เปลี่ยนผ่านหน้าสต็อก / เอกสารขายเท่านั้น, batch_quantity แก้ในหน้าคำนวณต้นทุน
 // track_stock = false → งานสั่งทำ / ค่าบริการ ไม่นับสต็อก ขายได้ไม่จำกัด
 // custom_fields = ค่าของช่องเพิ่มเติมที่ร้านตั้งเอง {"<id ช่อง>": "ค่า"} (ดู /product-fields)
+// category_id = หมวด (ว่าง = ไม่มีหมวด, จัดการที่ /product-categories), category = ชื่อหมวด (อ่านอย่างเดียว ไว้แสดง)
 // image_version = เวลาที่เปลี่ยนรูปล่าสุด (0 = ไม่มีรูป) → รูปอยู่ที่ GET /products/{id}/image?v=<image_version>
 type Product struct {
 	ID            string            `json:"id"`
 	Code          string            `json:"code"`
 	Name          string            `json:"name"`
+	CategoryID    string            `json:"category_id"`
 	Category      string            `json:"category"`
 	Description   string            `json:"description"`
 	Unit          string            `json:"unit"`
@@ -38,11 +44,12 @@ type Image struct {
 
 // ProductRequest ข้อมูลที่รับมาตอนเพิ่ม / แก้สินค้า
 // track_stock เป็น pointer เพื่อแยก "ไม่ส่งมา" ออกจาก "ส่ง false มา"
-// ไม่ส่ง track_stock / custom_fields มา: ตอนเพิ่ม = นับสต็อก / ไม่มีช่องเพิ่มเติม, ตอนแก้ = ใช้ค่าเดิม
+// ไม่ส่ง track_stock / custom_fields / category_id มา: ตอนเพิ่ม = นับสต็อก / ไม่มีช่องเพิ่มเติม / ไม่มีหมวด, ตอนแก้ = ใช้ค่าเดิม
+// category_id = "" → ไม่มีหมวด
 type ProductRequest struct {
 	Code         string            `json:"code"`
 	Name         string            `json:"name"`
-	Category     string            `json:"category"`
+	CategoryID   *string           `json:"category_id"`
 	Description  string            `json:"description"`
 	Unit         string            `json:"unit"`
 	CostPrice    float64           `json:"cost_price"`
@@ -63,6 +70,9 @@ func (req ProductRequest) Validate() string {
 	if req.MinStock < 0 {
 		return "product_min_stock_invalid"
 	}
+	if req.CategoryID != nil && *req.CategoryID != "" && !utils.IsUUID(*req.CategoryID) {
+		return "product_category_invalid"
+	}
 	if len(req.CustomFields) > maxCustomFields {
 		return "product_custom_fields_invalid"
 	}
@@ -72,6 +82,14 @@ func (req ProductRequest) Validate() string {
 		}
 	}
 	return ""
+}
+
+// categoryIDText ค่าตอนเพิ่มสินค้า: ไม่ส่งมา = ไม่มีหมวด ("")
+func (req ProductRequest) categoryIDText() string {
+	if req.CategoryID == nil {
+		return ""
+	}
+	return *req.CategoryID
 }
 
 // trackStock ค่าตอนเพิ่มสินค้า: ไม่ส่ง track_stock มา → นับสต็อก (ค่าเริ่มต้น)

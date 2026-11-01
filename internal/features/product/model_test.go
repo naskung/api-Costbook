@@ -11,11 +11,18 @@ func TestProductRequest_Validate(t *testing.T) {
 		tooManyFields[strings.Repeat("x", i+1)] = "ค่า"
 	}
 
+	categoryID := "c1111111-1111-1111-1111-111111111111"
+	noCategory := ""
+	badCategory := "งานพิมพ์ 3D"
+
 	tests := []struct {
 		name string
 		req  ProductRequest
 		want string
 	}{
+		{"มีหมวด (id) ผ่าน", ProductRequest{Name: "เคส", CategoryID: &categoryID}, ""},
+		{"ส่งหมวดว่าง = ไม่มีหมวด ผ่าน", ProductRequest{Name: "เคส", CategoryID: &noCategory}, ""},
+		{"ส่งชื่อหมวดแทน id ไม่ผ่าน", ProductRequest{Name: "เคส", CategoryID: &badCategory}, "product_category_invalid"},
 		{"ข้อมูลครบ ผ่าน", ProductRequest{Name: "กาแฟ", Unit: "แก้ว", CostPrice: 20, SellPrice: 45, MinStock: 5}, ""},
 		{"ราคาเป็น 0 ผ่าน", ProductRequest{Name: "กาแฟ"}, ""},
 		{"มีช่องเพิ่มเติม ผ่าน", ProductRequest{Name: "เคส", CustomFields: map[string]string{"f1": "PLA"}}, ""},

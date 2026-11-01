@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/naskung/api-Costbook/internal/features/product"
 	"github.com/naskung/api-Costbook/internal/features/stock"
 	"github.com/naskung/api-Costbook/internal/features/transaction"
 )
@@ -39,7 +38,7 @@ func TestToolbox_UpdateProduct(t *testing.T) {
 	if len(action.Changes) != 1 || action.Changes[0] != (Change{Field: "sell_price", From: 250.0, To: 290.0}) {
 		t.Errorf("หน่วยเหมือนเดิมไม่นับว่าเปลี่ยน ต้องเปลี่ยนแค่ราคา ได้ %+v", action.Changes)
 	}
-	req := action.Data.(product.ProductRequest)
+	req := action.Data.(productProposal).ProductRequest
 	if req.SellPrice != 290 || req.Name != "เคสโทรศัพท์" || req.CostPrice != 52.8 || !*req.TrackStock {
 		t.Errorf("data ต้องเป็นสินค้าทั้งตัวหลังแก้ ได้ %+v", req)
 	}
@@ -55,7 +54,7 @@ func TestToolbox_CreateProduct(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := action.Data.(product.ProductRequest)
+	req := action.Data.(productProposal).ProductRequest
 	if action.Type != actionCreateProduct || !*req.TrackStock || req.CustomFields == nil {
 		t.Errorf("ไม่ส่ง track_stock = นับสต็อก, custom_fields = {} ได้ %+v", req)
 	}
@@ -131,4 +130,45 @@ func TestToolbox_MarketCheck_NeedsWebSearch(t *testing.T) {
 	free := toolbox{shop: fakeShop{}, repo: &fakeRepository{}, today: testToday}
 	_, _, err = free.run(context.Background(), "propose_market_check", []byte(`{"product_id":"`+caseID+`","reason":"x"}`))
 	wantToolError(t, err, "AI ฟรีค้นเว็บไม่ได้")
+}
+
+func TestToolbox_CreateProduct_Category(t *testing.T) {
+	_, action, err := runTool(t, "propose_create_product", `{"name":"พวงกุญแจ","category":" งานพิมพ์ 3d ","sell_price":89,"reason":"x"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := action.Data.(productProposal).ProductRequest
+	if req.CategoryID == nil || *req.CategoryID != printCategoryID {
+		t.Errorf("category_id = %v, ต้องได้ id ของหมวด งานพิมพ์ 3D (ชื่อไม่สนตัวพิมพ์ / ช่องว่าง)", req.CategoryID)
+	}
+	if name := action.Data.(productProposal).Category; name != "งานพิมพ์ 3d" {
+		t.Errorf("ชื่อหมวดไว้โชว์ = %q, ต้องได้ชื่อที่ AI ส่งมา (ตัดช่องว่าง)", name)
+	}
+
+	_, _, err = runTool(t, "propose_create_product", `{"name":"พวงกุญแจ","category":"ของเล่น","sell_price":89,"reason":"x"}`)
+	wantToolError(t, err, "ยังไม่มีหมวด")
+}
+
+func TestToolbox_UpdateProduct_Category(t *testing.T) {
+	_, action, err := runTool(t, "propose_update_product", `{"product_id":"`+caseID+`","category":"งานพิมพ์ 3D","reason":"จัดหมวด"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := action.Data.(productProposal).ProductRequest
+	if req.CategoryID == nil || *req.CategoryID != printCategoryID {
+		t.Errorf("category_id = %v, ต้องได้ id ของหมวด งานพิมพ์ 3D", req.CategoryID)
+	}
+	if len(action.Changes) != 1 || action.Changes[0].Field != "category" || action.Changes[0].To != "งานพิมพ์ 3D" {
+		t.Errorf("changes = %+v, ต้องบอกว่าเปลี่ยนหมวดเป็น งานพิมพ์ 3D (แสดงชื่อ ไม่ใช่ id)", action.Changes)
+	}
+}
+
+func TestToolbox_ShopInfo_Categories(t *testing.T) {
+	text, _, err := runTool(t, "get_shop_info", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "งานพิมพ์ 3D") {
+		t.Errorf("ข้อมูลร้าน = %s, ต้องมีรายชื่อหมวดให้ AI เลือก", text)
+	}
 }

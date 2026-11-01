@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/naskung/api-Costbook/internal/features/product"
@@ -48,7 +49,7 @@ func (t toolbox) run(ctx context.Context, name string, input []byte) (string, *A
 	case "list_transactions":
 		return t.transactions(ctx, input)
 	case "propose_create_product":
-		return t.proposeCreateProduct(input)
+		return t.proposeCreateProduct(ctx, input)
 	case "propose_update_product":
 		return t.proposeUpdateProduct(ctx, input)
 	case "propose_stock_in":
@@ -74,13 +75,52 @@ func (t toolbox) shopInfo(ctx context.Context) (string, *Action, error) {
 	if err != nil {
 		return "", nil, err
 	}
+	categories, err := t.categoryNames(ctx)
+	if err != nil {
+		return "", nil, err
+	}
 	return jsonText(map[string]any{
 		"name":               shop.Name,
 		"vat_registered":     shop.VATRegistered,
 		"prices_include_vat": shop.PricesIncludeVAT,
 		"use_cost_page":      shop.UseCostPage,
 		"product_fields":     fields,
+		"product_categories": categories,
 	})
+}
+
+// categoryNames ชื่อหมวดหมู่สินค้าทั้งหมด (ให้ AI เลือกใช้)
+func (t toolbox) categoryNames(ctx context.Context) ([]string, error) {
+	categories, err := t.shop.Categories(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := []string{}
+	for _, c := range categories {
+		names = append(names, c.Name)
+	}
+	return names, nil
+}
+
+// categoryID หา id ของหมวดจากชื่อที่ AI ส่งมา ("" = ไม่มีหมวด) ไม่มีหมวดชื่อนี้ → ส่งกลับให้ AI เลือกหมวดที่มี
+// AI สร้างหมวดใหม่เองไม่ได้ ผู้ใช้เพิ่มที่เมนู สินค้า → หมวดหมู่สินค้า
+func (t toolbox) categoryID(ctx context.Context, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	categories, err := t.shop.Categories(ctx)
+	if err != nil {
+		return "", err
+	}
+	names := []string{}
+	for _, c := range categories {
+		if strings.EqualFold(strings.TrimSpace(c.Name), name) {
+			return c.ID, nil
+		}
+		names = append(names, c.Name)
+	}
+	return "", toolError(fmt.Sprintf("ยังไม่มีหมวด %q ใช้หมวดที่มี: %v หรือเว้นว่าง (ถ้าต้องการหมวดใหม่ บอกผู้ใช้ให้เพิ่มที่เมนู สินค้า → หมวดหมู่สินค้า ก่อน)", name, names))
 }
 
 // listProducts สินค้าทั้งหมด ช่องข้อมูลเพิ่มเติมแปลงเป็น "ชื่อช่อง: ค่า" ให้ AI อ่านง่าย
@@ -157,7 +197,13 @@ func (t toolbox) transactions(ctx context.Context, input []byte) (string, *Actio
 
 // ---------- เสนองาน (ตรวจข้อมูลด้วยกฎเดียวกับ API เส้นจริง ผิด → ส่งกลับให้ AI แก้) ----------
 
-func (t toolbox) proposeCreateProduct(input []byte) (string, *Action, error) {
+// productProposal ข้อมูลสินค้าที่เสนอ = สิ่งที่ POST / PUT /products รับ + ชื่อหมวดไว้โชว์ในการ์ด (API ไม่ใช้ field category)
+type productProposal struct {
+	product.ProductRequest
+	Category string `json:"category"`
+}
+
+func (t toolbox) proposeCreateProduct(ctx context.Context, input []byte) (string, *Action, error) {
 	var in struct {
 		Name        string  `json:"name"`
 		Unit        string  `json:"unit"`
@@ -173,16 +219,21 @@ func (t toolbox) proposeCreateProduct(input []byte) (string, *Action, error) {
 	if err := readInput(input, &in); err != nil {
 		return "", nil, err
 	}
+	categoryID, err := t.categoryID(ctx, in.Category)
+	if err != nil {
+		return "", nil, err
+	}
 	trackStock := in.TrackStock == nil || *in.TrackStock
 	req := product.ProductRequest{
-		Name: in.Name, Unit: in.Unit, Category: in.Category, Code: in.Code, Description: in.Description,
+		Name: in.Name, Unit: in.Unit, CategoryID: &categoryID, Code: in.Code, Description: in.Description,
 		SellPrice: in.SellPrice, CostPrice: in.CostPrice, MinStock: in.MinStock,
 		TrackStock: &trackStock, CustomFields: map[string]string{},
 	}
 	if code := req.Validate(); code != "" {
 		return "", nil, toolError("ข้อมูลสินค้าไม่ถูกต้อง: " + code)
 	}
-	return proposed(Action{Type: actionCreateProduct, Reason: in.Reason, ProductName: req.Name, Data: req})
+	data := productProposal{ProductRequest: req, Category: strings.TrimSpace(in.Category)}
+	return proposed(Action{Type: actionCreateProduct, Reason: in.Reason, ProductName: req.Name, Data: data})
 }
 
 // proposeUpdateProduct ส่งสินค้าทั้งตัวหลังแก้ (Flutter PUT ได้เลย) + รายการช่องที่เปลี่ยนไว้โชว์ผู้ใช้
@@ -208,10 +259,19 @@ func (t toolbox) proposeUpdateProduct(ctx context.Context, input []byte) (string
 	}
 
 	req := requestOf(p)
+	categoryName := p.Category
 	changes := []Change{}
 	changeText(&changes, "name", &req.Name, in.Name)
 	changeText(&changes, "unit", &req.Unit, in.Unit)
-	changeText(&changes, "category", &req.Category, in.Category)
+	if in.Category != nil && strings.TrimSpace(*in.Category) != p.Category {
+		categoryID, err := t.categoryID(ctx, *in.Category)
+		if err != nil {
+			return "", nil, err
+		}
+		categoryName = strings.TrimSpace(*in.Category)
+		changes = append(changes, Change{Field: "category", From: p.Category, To: categoryName})
+		req.CategoryID = &categoryID
+	}
 	changeText(&changes, "code", &req.Code, in.Code)
 	changeText(&changes, "description", &req.Description, in.Description)
 	changeNumber(&changes, "sell_price", &req.SellPrice, in.SellPrice)
@@ -227,7 +287,8 @@ func (t toolbox) proposeUpdateProduct(ctx context.Context, input []byte) (string
 		return "", nil, toolError("ข้อมูลสินค้าไม่ถูกต้อง: " + code)
 	}
 	return proposed(Action{
-		Type: actionUpdateProduct, Reason: in.Reason, ProductID: p.ID, ProductName: p.Name, Changes: changes, Data: req,
+		Type: actionUpdateProduct, Reason: in.Reason, ProductID: p.ID, ProductName: p.Name, Changes: changes,
+		Data: productProposal{ProductRequest: req, Category: categoryName},
 	})
 }
 
@@ -371,12 +432,13 @@ func (t toolbox) monthOf(input []byte) (string, error) {
 // requestOf ข้อมูลสินค้าปัจจุบันในรูปแบบที่ PUT /products/{id} รับ
 func requestOf(p product.Product) product.ProductRequest {
 	trackStock := p.TrackStock
+	categoryID := p.CategoryID
 	customFields := p.CustomFields
 	if customFields == nil {
 		customFields = map[string]string{}
 	}
 	return product.ProductRequest{
-		Code: p.Code, Name: p.Name, Category: p.Category, Description: p.Description, Unit: p.Unit,
+		Code: p.Code, Name: p.Name, CategoryID: &categoryID, Description: p.Description, Unit: p.Unit,
 		CostPrice: p.CostPrice, SellPrice: p.SellPrice, MinStock: p.MinStock,
 		TrackStock: &trackStock, CustomFields: customFields,
 	}

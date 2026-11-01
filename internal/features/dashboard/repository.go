@@ -238,12 +238,13 @@ func (r *PostgresRepository) topProducts(ctx context.Context, monthStart string)
 // categorySales ยอดขายตามหมวดสินค้า (หมวดปัจจุบันของสินค้า) มากไปน้อย
 func (r *PostgresRepository) categorySales(ctx context.Context, monthStart string) ([]CategoryAmount, error) {
 	return r.categoryAmounts(ctx, `
-		SELECT p.category, SUM(`+netAmount+`)
+		SELECT COALESCE(c.name, ''), SUM(`+netAmount+`)
 		FROM invoice_items ii
 		JOIN invoices i ON i.id = ii.invoice_id
 		JOIN products p ON p.id = ii.product_id
+		LEFT JOIN product_categories c ON c.id = p.category_id
 		WHERE `+issuedInMonth+`
-		GROUP BY p.category
+		GROUP BY COALESCE(c.name, '')
 		ORDER BY 2 DESC`, monthStart)
 }
 

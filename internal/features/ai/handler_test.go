@@ -12,6 +12,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/naskung/api-Costbook/internal/features/category"
 	"github.com/naskung/api-Costbook/internal/features/company"
 	"github.com/naskung/api-Costbook/internal/features/cost"
 	"github.com/naskung/api-Costbook/internal/features/dashboard"
@@ -101,6 +102,13 @@ func (fakeShop) Company(ctx context.Context) (company.Company, error) {
 	return company.Company{Name: "MAKEHUB", VATRegistered: true, PricesIncludeVAT: true}, nil
 }
 func (fakeShop) Fields(ctx context.Context) ([]field.ProductField, error) { return nil, nil }
+
+// printCategoryID หมวด "งานพิมพ์ 3D" ของร้านปลอม
+const printCategoryID = "c1111111-1111-1111-1111-111111111111"
+
+func (fakeShop) Categories(ctx context.Context) ([]category.Category, error) {
+	return []category.Category{{ID: printCategoryID, Name: "งานพิมพ์ 3D", ProductCount: 1}}, nil
+}
 func (fakeShop) Products(ctx context.Context) ([]product.Product, error) {
 	return []product.Product{phoneCase}, nil
 }

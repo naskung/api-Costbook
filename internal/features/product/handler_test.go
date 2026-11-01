@@ -56,8 +56,11 @@ func (f *fakeRepository) Create(ctx context.Context, req ProductRequest) (Produc
 			return Product{}, ErrCodeTaken
 		}
 	}
+	if req.categoryIDText() == missingID {
+		return Product{}, ErrCategoryNotFound
+	}
 	p := Product{
-		ID: "new-id", Code: req.Code, Name: req.Name, Unit: req.Unit, CostPrice: req.CostPrice, SellPrice: req.SellPrice,
+		ID: "new-id", Code: req.Code, Name: req.Name, CategoryID: req.categoryIDText(), Unit: req.Unit, CostPrice: req.CostPrice, SellPrice: req.SellPrice,
 		MinStock: req.MinStock, BatchQuantity: 1, TrackStock: req.trackStock(), CustomFields: req.customFields(),
 	}
 	f.products = append(f.products, p)
@@ -456,4 +459,19 @@ func TestHandler_ImageDBError(t *testing.T) {
 	checkError(t, sendRequest(router, http.MethodGet, "/api/v1/products/"+coffeeID+"/image", ""), http.StatusInternalServerError, "server_error")
 	checkError(t, sendRequest(router, http.MethodDelete, "/api/v1/products/"+coffeeID+"/image", ""), http.StatusInternalServerError, "server_error")
 	checkError(t, sendImage(t, router, "/api/v1/products/"+coffeeID+"/image", []byte(testPNG)), http.StatusInternalServerError, "server_error")
+}
+
+func TestHandler_Create_Category(t *testing.T) {
+	router := newTestRouter(coffeeRepo())
+	categoryID := "c1111111-1111-1111-1111-111111111111"
+
+	rec := sendRequest(router, http.MethodPost, "/api/v1/products", `{"name":"เคส","category_id":"`+categoryID+`"}`)
+	var got Product
+	json.NewDecoder(rec.Body).Decode(&got)
+	if rec.Code != http.StatusCreated || got.CategoryID != categoryID {
+		t.Errorf("ได้ %d category_id = %q, ต้องได้ 201 และ category_id ที่ส่งไป", rec.Code, got.CategoryID)
+	}
+
+	checkError(t, sendRequest(router, http.MethodPost, "/api/v1/products", `{"name":"เคส","category_id":"งานพิมพ์"}`), http.StatusBadRequest, "product_category_invalid")
+	checkError(t, sendRequest(router, http.MethodPost, "/api/v1/products", `{"name":"เคส","category_id":"`+missingID+`"}`), http.StatusBadRequest, "product_category_invalid")
 }

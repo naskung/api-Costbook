@@ -69,6 +69,10 @@ func (h *Handler) Create(c *gin.Context) {
 		helpers.WriteError(c, http.StatusConflict, "product_code_taken")
 		return
 	}
+	if errors.Is(err, ErrCategoryNotFound) {
+		helpers.WriteError(c, http.StatusBadRequest, "product_category_invalid")
+		return
+	}
 	if err != nil {
 		helpers.ServerError(c, err)
 		return
@@ -94,6 +98,10 @@ func (h *Handler) Update(c *gin.Context) {
 	}
 	if errors.Is(err, ErrCodeTaken) {
 		helpers.WriteError(c, http.StatusConflict, "product_code_taken")
+		return
+	}
+	if errors.Is(err, ErrCategoryNotFound) {
+		helpers.WriteError(c, http.StatusBadRequest, "product_category_invalid")
 		return
 	}
 	if err != nil {

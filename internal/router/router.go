@@ -9,6 +9,7 @@ import (
 	"github.com/naskung/api-Costbook/internal/config"
 	"github.com/naskung/api-Costbook/internal/features/ai"
 	"github.com/naskung/api-Costbook/internal/features/auth"
+	"github.com/naskung/api-Costbook/internal/features/category"
 	"github.com/naskung/api-Costbook/internal/features/company"
 	"github.com/naskung/api-Costbook/internal/features/cost"
 	"github.com/naskung/api-Costbook/internal/features/dashboard"
@@ -51,6 +52,10 @@ func New(cfg config.Config, db *pgxpool.Pool) *gin.Engine {
 	fieldHandler := field.NewHandler(fieldRepo)
 	fieldHandler.RegisterRoutes(api, authRequired)
 
+	categoryRepo := category.NewPostgresRepository(db)
+	categoryHandler := category.NewHandler(categoryRepo)
+	categoryHandler.RegisterRoutes(api, authRequired)
+
 	costRepo := cost.NewPostgresRepository(db)
 	costHandler := cost.NewHandler(costRepo)
 	costHandler.RegisterRoutes(api, authRequired)
@@ -71,7 +76,7 @@ func New(cfg config.Config, db *pgxpool.Pool) *gin.Engine {
 
 	// AI อ่านข้อมูลร้านผ่าน repository ของ feature อื่น / เลือก Claude (มี key) หรือ Gemini ฟรีให้เอง
 	shop := ai.Shop{
-		CompanyRepo: companyRepo, FieldRepo: fieldRepo, ProductRepo: productRepo,
+		CompanyRepo: companyRepo, FieldRepo: fieldRepo, CategoryRepo: categoryRepo, ProductRepo: productRepo,
 		CostRepo: costRepo, DashboardRepo: dashboardRepo, TransactionRepo: transactionRepo,
 	}
 	aiConfig := ai.Config{

@@ -4,11 +4,19 @@ import "time"
 
 // Dashboard ตัวเลขสรุปของหน้าแรก (เดือนที่เลือก)
 // invoice_count / invoice_total นับเฉพาะเอกสารขายที่ยังไม่ยกเลิก / low_stock ไม่นับสินค้าที่ไม่นับสต็อก
+// income / expense = เงินเข้า / ออกตามที่บันทึก, revenue = รายได้ (ยอดขายก่อน VAT + รายรับอื่น)
+// profit = กำไรสุทธิ = revenue − ต้นทุนสินค้าที่ขาย (sales.cost) − operating_expense (รายจ่ายไม่รวมซื้อวัตถุดิบ)
+// คิดด้วย transaction.NewSummary ตัวเดียวกับหน้ารายรับ-รายจ่าย
 type Dashboard struct {
-	Month         string         `json:"month"`
-	Income        float64        `json:"income"`
-	Expense       float64        `json:"expense"`
-	Profit        float64        `json:"profit"`
+	Month            string  `json:"month"`
+	Income           float64 `json:"income"`
+	Expense          float64 `json:"expense"`
+	Profit           float64 `json:"profit"`
+	Revenue          float64 `json:"revenue"`
+	OtherIncome      float64 `json:"other_income"`
+	MaterialExpense  float64 `json:"material_expense"`
+	OperatingExpense float64 `json:"operating_expense"`
+
 	InvoiceCount  int            `json:"invoice_count"`
 	InvoiceTotal  float64        `json:"invoice_total"`
 	ProductCount  int            `json:"product_count"`
@@ -50,16 +58,19 @@ type SalesSummary struct {
 	AverageBill float64 `json:"average_bill"`
 }
 
-// MonthTotals ยอดของ 1 เดือน (ไว้ทำกราฟย้อนหลัง และเทียบกับเดือนก่อน)
-// income / expense / profit มาจากรายรับ-รายจ่าย, net_sales / bills / gross_profit มาจากเอกสารขาย
+// MonthTotals ยอดของ 1 เดือน (ไว้ทำกราฟย้อนหลัง และเทียบกับเดือนก่อน) — ความหมายเหมือน Dashboard / transaction.Summary
+// net_sales / bills / gross_profit / cost_of_sales มาจากเอกสารขาย, profit = กำไรสุทธิ
 type MonthTotals struct {
-	Month       string  `json:"month"`
-	Income      float64 `json:"income"`
-	Expense     float64 `json:"expense"`
-	Profit      float64 `json:"profit"`
-	NetSales    float64 `json:"net_sales"`
-	Bills       int     `json:"bills"`
-	GrossProfit float64 `json:"gross_profit"`
+	Month            string  `json:"month"`
+	Income           float64 `json:"income"`
+	Expense          float64 `json:"expense"`
+	Profit           float64 `json:"profit"`
+	NetSales         float64 `json:"net_sales"`
+	Bills            int     `json:"bills"`
+	GrossProfit      float64 `json:"gross_profit"`
+	Revenue          float64 `json:"revenue"`
+	CostOfSales      float64 `json:"cost_of_sales"`
+	OperatingExpense float64 `json:"operating_expense"`
 }
 
 // DailySales ยอดขายรายวัน (มีทุกวันของเดือน วันที่ไม่มีขายได้ 0)

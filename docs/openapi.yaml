@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.6.0
+  version: 0.7.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -2217,21 +2217,30 @@ components:
 
     TransactionSummary:
       type: object
-      required: [month, income, expense, profit]
+      description: |
+        สรุปเงินของเดือน — หน้าภาพรวมคิดแบบเดียวกัน
+        - **รายได้** `revenue` = ยอดขายก่อน VAT (`sales`) + รายรับที่บันทึกเอง (`other_income`)
+        - **กำไรขั้นต้น** `gross_profit` = `sales` − ต้นทุนสินค้าที่ขาย (`cost_of_sales`, ต้นทุน ณ วันที่ขาย)
+        - **กำไรสุทธิ** `profit` = `revenue` − `cost_of_sales` − `operating_expense` (รายจ่ายไม่รวมหมวดซื้อวัตถุดิบ เพราะคิดในต้นทุนสินค้าแล้ว)
+        - `income` / `expense` = เงินเข้า / ออกตามที่บันทึก (รายรับจากเอกสารขายรวม VAT) — ไม่ใช่กำไร
+      required: [month, income, expense, sales, other_income, revenue, cost_of_sales, gross_profit, material_expense, operating_expense, profit]
       properties:
         month:
           type: string
-          example: "2026-10"
-        income:
-          type: number
-          example: 12500
-        expense:
-          type: number
-          example: 4300.5
+          example: "2026-11"
+        income: { type: number, description: เงินเข้าทั้งหมดตามที่บันทึก, example: 1370 }
+        expense: { type: number, description: เงินออกทั้งหมดตามที่บันทึก (รวมซื้อวัตถุดิบ), example: 1600 }
+        sales: { type: number, description: ยอดขายก่อน VAT หลังหักส่วนลด (เอกสารขายที่ไม่ยกเลิก), example: 1000 }
+        other_income: { type: number, description: รายรับที่บันทึกเอง ไม่ได้มาจากเอกสารขาย, example: 300 }
+        revenue: { type: number, description: รายได้ = sales + other_income, example: 1300 }
+        cost_of_sales: { type: number, description: ต้นทุนสินค้าที่ขาย (จำนวน × ต้นทุน ณ วันที่ขาย), example: 600 }
+        gross_profit: { type: number, description: กำไรขั้นต้น = sales − cost_of_sales, example: 400 }
+        material_expense: { type: number, description: รายจ่ายหมวดซื้อวัตถุดิบ (ไม่หักในกำไร), example: 1250 }
+        operating_expense: { type: number, description: รายจ่ายที่หักในกำไร = expense − material_expense, example: 350 }
         profit:
           type: number
-          description: รายรับ − รายจ่าย (ขาดทุน = ติดลบ)
-          example: 8199.5
+          description: กำไรสุทธิ = revenue − cost_of_sales − operating_expense (ขาดทุน = ติดลบ)
+          example: 350
 
     InvoiceSummary:
       type: object
@@ -2426,13 +2435,20 @@ components:
           example: "2026-10"
         income:
           type: number
+          description: เงินเข้าตามที่บันทึก (ไม่ใช่กำไร)
           example: 12500
         expense:
           type: number
+          description: เงินออกตามที่บันทึก (รวมซื้อวัตถุดิบ)
           example: 4300.5
         profit:
           type: number
-          example: 8199.5
+          description: กำไรสุทธิ = revenue − sales.cost − operating_expense (คิดแบบเดียวกับ TransactionSummary)
+          example: 2950.5
+        revenue: { type: number, description: รายได้ = ยอดขายก่อน VAT + รายรับที่บันทึกเอง, example: 11800 }
+        other_income: { type: number, description: รายรับที่บันทึกเอง ไม่ได้มาจากเอกสารขาย, example: 300 }
+        material_expense: { type: number, description: รายจ่ายหมวดซื้อวัตถุดิบ (ไม่หักในกำไร), example: 1250 }
+        operating_expense: { type: number, description: รายจ่ายที่หักในกำไร = expense − material_expense, example: 3050.5 }
         invoice_count:
           type: integer
           description: จำนวนใบกำกับที่ยังไม่ยกเลิกของเดือน
@@ -2513,10 +2529,13 @@ components:
         month: { type: string, example: "2026-10" }
         income: { type: number, example: 2406.15 }
         expense: { type: number, example: 0 }
-        profit: { type: number, example: 2406.15 }
+        profit: { type: number, description: กำไรสุทธิ (คิดแบบเดียวกับ TransactionSummary), example: 1775.72 }
         net_sales: { type: number, description: ยอดขายก่อน VAT จากเอกสารขาย, example: 2250.79 }
         bills: { type: integer, description: จำนวนเอกสารขายที่ไม่ยกเลิก, example: 9 }
         gross_profit: { type: number, description: "ยอดขายก่อน VAT − ต้นทุน ณ วันที่ขาย", example: 1775.72 }
+        revenue: { type: number, description: รายได้ = ยอดขายก่อน VAT + รายรับที่บันทึกเอง, example: 2250.79 }
+        cost_of_sales: { type: number, description: ต้นทุนสินค้าที่ขาย, example: 475.07 }
+        operating_expense: { type: number, description: รายจ่ายที่หักในกำไร (ไม่รวมซื้อวัตถุดิบ), example: 0 }
 
     DailySales:
       type: object

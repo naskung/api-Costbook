@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/naskung/api-Costbook/internal/features/transaction"
 	"github.com/naskung/api-Costbook/internal/utils"
 )
 
@@ -41,17 +42,18 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 func (r *PostgresRepository) Get(ctx context.Context, monthStart string) (Dashboard, error) {
 	d := Dashboard{Month: monthStart[:7]} // "2026-10-01" → "2026-10"
 
-	err := r.db.QueryRow(ctx, `
-		SELECT
-			COALESCE(SUM(amount) FILTER (WHERE type = 'income'), 0),
-			COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0)
-		FROM transactions
-		WHERE date >= $1::date AND date < $1::date + interval '1 month'`, monthStart).
-		Scan(&d.Income, &d.Expense)
+	amounts, err := transaction.ScanMonthAmounts(r.db.QueryRow(ctx, transaction.MonthAmountsSQL, monthStart))
 	if err != nil {
 		return Dashboard{}, err
 	}
-	d.Profit = utils.Profit(d.Income, d.Expense)
+	summary := transaction.NewSummary(d.Month, amounts)
+	d.Income = summary.Income
+	d.Expense = summary.Expense
+	d.Profit = summary.Profit
+	d.Revenue = summary.Revenue
+	d.OtherIncome = summary.OtherIncome
+	d.MaterialExpense = summary.MaterialExpense
+	d.OperatingExpense = summary.OperatingExpense
 
 	err = r.db.QueryRow(ctx, `
 		SELECT COUNT(*), COALESCE(SUM(total), 0)
@@ -160,42 +162,23 @@ func (r *PostgresRepository) sales(ctx context.Context, monthStart string, bills
 	return salesSummary(s, bills), nil
 }
 
-// monthlyTrend รายรับ / รายจ่าย / กำไร / ยอดขาย / จำนวนบิล / กำไรขั้นต้น ย้อนหลัง 6 เดือน (เรียงเก่า → ใหม่ เดือนสุดท้าย = เดือนที่เลือก)
+// monthlyTrend ยอดของเดือนย้อนหลัง 6 เดือน (เรียงเก่า → ใหม่ เดือนสุดท้าย = เดือนที่เลือก)
+// ใช้ SQL ตัวเดียวกับหน้ารายรับ-รายจ่าย (transaction.MonthAmountsSQL) → กำไรตรงกันทุกหน้า
 func (r *PostgresRepository) monthlyTrend(ctx context.Context, monthStart string) ([]MonthTotals, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT
-			to_char(m, 'YYYY-MM'),
-			COALESCE((SELECT SUM(amount) FROM transactions
-				WHERE type = 'income' AND date >= m AND date < m + interval '1 month'), 0),
-			COALESCE((SELECT SUM(amount) FROM transactions
-				WHERE type = 'expense' AND date >= m AND date < m + interval '1 month'), 0),
-			COALESCE((SELECT SUM(subtotal) FROM invoices
-				WHERE status = 'issued' AND issue_date >= m AND issue_date < m + interval '1 month'), 0),
-			(SELECT COUNT(*) FROM invoices
-				WHERE status = 'issued' AND issue_date >= m AND issue_date < m + interval '1 month'),
-			COALESCE((SELECT SUM(ii.quantity * ii.cost_price) FROM invoice_items ii JOIN invoices i ON i.id = ii.invoice_id
-				WHERE i.status = 'issued' AND i.issue_date >= m AND i.issue_date < m + interval '1 month'), 0)
-		FROM generate_series($1::date - make_interval(months => $2), $1::date, interval '1 month') AS m
-		ORDER BY m`, monthStart, trendMonths-1)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	months := []MonthTotals{}
-	for rows.Next() {
-		var m MonthTotals
-		var cost float64
-		err := rows.Scan(&m.Month, &m.Income, &m.Expense, &m.NetSales, &m.Bills, &cost)
+	for _, start := range trendMonthStarts(monthStart, trendMonths) {
+		amounts, err := transaction.ScanMonthAmounts(r.db.QueryRow(ctx, transaction.MonthAmountsSQL, start))
 		if err != nil {
 			return nil, err
 		}
-		m.Profit = utils.Profit(m.Income, m.Expense)
-		m.NetSales = utils.Round2(m.NetSales)
-		m.GrossProfit = utils.Round2(m.NetSales - cost)
-		months = append(months, m)
+		var bills int
+		err = r.db.QueryRow(ctx, `SELECT COUNT(*) FROM invoices i WHERE `+issuedInMonth, start).Scan(&bills)
+		if err != nil {
+			return nil, err
+		}
+		months = append(months, monthTotals(start[:7], bills, amounts))
 	}
-	return months, rows.Err()
+	return months, nil
 }
 
 // dailySales ยอดขายรายวันของเดือน (มีทุกวัน วันที่ไม่ขายได้ 0)

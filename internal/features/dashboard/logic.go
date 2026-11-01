@@ -3,6 +3,7 @@ package dashboard
 import (
 	"time"
 
+	"github.com/naskung/api-Costbook/internal/features/transaction"
 	"github.com/naskung/api-Costbook/internal/utils"
 )
 
@@ -97,6 +98,36 @@ func previousMonthStart(monthStart string) string {
 		return monthStart
 	}
 	return start.AddDate(0, -1, 0).Format("2006-01-02")
+}
+
+// monthTotals ยอดของ 1 เดือนสำหรับกราฟย้อนหลัง (คิดกำไรด้วย transaction.NewSummary)
+func monthTotals(month string, bills int, a transaction.MonthAmounts) MonthTotals {
+	s := transaction.NewSummary(month, a)
+	return MonthTotals{
+		Month:            month,
+		Income:           s.Income,
+		Expense:          s.Expense,
+		Profit:           s.Profit,
+		NetSales:         s.Sales,
+		Bills:            bills,
+		GrossProfit:      s.GrossProfit,
+		Revenue:          s.Revenue,
+		CostOfSales:      s.CostOfSales,
+		OperatingExpense: s.OperatingExpense,
+	}
+}
+
+// trendMonthStarts วันแรกของเดือนย้อนหลัง count เดือน เรียงเก่า → ใหม่ (เดือนสุดท้าย = เดือนที่เลือก)
+func trendMonthStarts(monthStart string, count int) []string {
+	start, err := time.Parse("2006-01-02", monthStart)
+	if err != nil {
+		return []string{monthStart}
+	}
+	months := make([]string, 0, count)
+	for i := count - 1; i >= 0; i-- {
+		months = append(months, start.AddDate(0, -i, 0).Format("2006-01-02"))
+	}
+	return months
 }
 
 // previousMonth เดือนก่อนเดือนที่เลือก = ตัวรองสุดท้ายของกราฟย้อนหลัง (เรียงเก่า → ใหม่)

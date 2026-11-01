@@ -25,23 +25,25 @@ func TestRound2(t *testing.T) {
 	}
 }
 
-func TestProfit(t *testing.T) {
+func TestNetProfit(t *testing.T) {
 	tests := []struct {
-		name    string
-		income  float64
-		expense float64
-		want    float64
+		name        string
+		revenue     float64
+		costOfSales float64
+		expense     float64
+		want        float64
 	}{
-		{"รายรับ 1,000 รายจ่าย 400 กำไร 600", 1000, 400, 600},
-		{"รายจ่ายมากกว่ารายรับ ขาดทุนเป็นค่าติดลบ", 100, 250.5, -150.5},
-		{"0.1 + 0.2 ลบ 0.3 ได้ 0 พอดี (ปัดเศษแล้ว)", 0.1 + 0.2, 0.3, 0},
+		{"ขาย 1,000 ต้นทุน 600 รายจ่าย 100 กำไร 300", 1000, 600, 100, 300},
+		{"ขายได้แต่ยังไม่หักต้นทุน ไม่ใช่กำไรเต็มยอดขาย", 239.13, 227.74, 0, 11.39},
+		{"ต้นทุน + รายจ่ายมากกว่ารายได้ ขาดทุนเป็นค่าติดลบ", 100, 80, 70.5, -50.5},
+		{"0.1 + 0.2 ลบ 0.3 ได้ 0 พอดี (ปัดเศษแล้ว)", 0.1 + 0.2, 0.3, 0, 0},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Profit(tt.income, tt.expense)
+			got := NetProfit(tt.revenue, tt.costOfSales, tt.expense)
 			if got != tt.want {
-				t.Errorf("Profit(%v, %v) = %v, ต้องได้ %v", tt.income, tt.expense, got, tt.want)
+				t.Errorf("NetProfit(%v, %v, %v) = %v, ต้องได้ %v", tt.revenue, tt.costOfSales, tt.expense, got, tt.want)
 			}
 		})
 	}

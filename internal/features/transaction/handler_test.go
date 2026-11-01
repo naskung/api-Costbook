@@ -27,8 +27,7 @@ const (
 type fakeRepository struct {
 	transactions  []Transaction
 	gotMonthStart string
-	income        float64
-	expense       float64
+	amounts       MonthAmounts
 	err           error // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
 }
 
@@ -37,9 +36,9 @@ func (f *fakeRepository) List(ctx context.Context, monthStart string) ([]Transac
 	return f.transactions, f.err
 }
 
-func (f *fakeRepository) MonthTotals(ctx context.Context, monthStart string) (float64, float64, error) {
+func (f *fakeRepository) MonthAmounts(ctx context.Context, monthStart string) (MonthAmounts, error) {
 	f.gotMonthStart = monthStart
-	return f.income, f.expense, f.err
+	return f.amounts, f.err
 }
 
 func (f *fakeRepository) Create(ctx context.Context, req TransactionRequest) (Transaction, error) {
@@ -126,7 +125,7 @@ func TestHandler_List_RequiresLogin(t *testing.T) {
 }
 
 func TestHandler_Summary(t *testing.T) {
-	repo := &fakeRepository{income: 1000, expense: 250.5}
+	repo := &fakeRepository{amounts: MonthAmounts{Income: 1070, Expense: 250.5, Sales: 1000, CostOfSales: 600}}
 	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/transactions/summary?month=2026-10", "")
 
 	if rec.Code != http.StatusOK {
@@ -134,7 +133,10 @@ func TestHandler_Summary(t *testing.T) {
 	}
 	var got Summary
 	json.NewDecoder(rec.Body).Decode(&got)
-	want := Summary{Month: "2026-10", Income: 1000, Expense: 250.5, Profit: 749.5}
+	want := NewSummary("2026-10", repo.amounts)
+	if want.Profit != 149.5 {
+		t.Fatalf("กำไรสุทธิที่คาดไว้ = %v, ต้องได้ 1,000 − 600 − 250.5 = 149.5", want.Profit)
+	}
 	if got != want {
 		t.Errorf("ได้ %+v, ต้องได้ %+v", got, want)
 	}

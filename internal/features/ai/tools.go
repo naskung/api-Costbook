@@ -180,7 +180,7 @@ var chatTools = []toolSpec{
 	newTool("get_market_check", "ผลเช็คราคาตลาดครั้งล่าสุดของสินค้า (ที่เคยเช็คไว้ ไม่ได้ค้นใหม่)", map[string]any{
 		"product_id": productIDProp,
 	}, "product_id"),
-	newTool("get_dashboard", "ภาพรวมของเดือน: รายรับ รายจ่าย กำไร ยอดขาย กำไรขั้นต้น สินค้าขายดี ยอดตามหมวด ย้อนหลัง 6 เดือน มูลค่าสต็อก เทียบราคาตลาด", map[string]any{
+	newTool("get_dashboard", "ภาพรวมของเดือน: รายได้ (revenue = ยอดขายก่อน VAT + รายรับอื่น) กำไรขั้นต้น (sales.gross_profit = ยอดขาย − ต้นทุนสินค้าที่ขาย) กำไรสุทธิ (profit = รายได้ − ต้นทุนสินค้าที่ขาย − operating_expense ซึ่งไม่รวมซื้อวัตถุดิบ) / income / expense = เงินเข้า-ออกตามที่บันทึก (ไม่ใช่กำไร) / สินค้าขายดี ยอดตามหมวด ย้อนหลัง 6 เดือน มูลค่าสต็อก เทียบราคาตลาด", map[string]any{
 		"month": stringProp("เดือนแบบ YYYY-MM ไม่ใส่ = เดือนนี้"),
 	}),
 	newTool("list_transactions", "รายการรายรับ-รายจ่ายของเดือน", map[string]any{

@@ -29,12 +29,38 @@ type TransactionRequest struct {
 	Note     string  `json:"note"`
 }
 
-// Summary สรุปรายรับ รายจ่าย กำไร ของเดือน
+// CategoryMaterial หมวดรายจ่าย "ซื้อวัตถุดิบ" — ไม่หักในกำไร เพราะคิดอยู่ในต้นทุนสินค้าที่ขายแล้ว (ผู้ใช้เลือก 2026-11-01)
+const CategoryMaterial = "material"
+
+// Summary สรุปเงินของเดือน
+//   - income / expense = เงินเข้า / ออกตามที่บันทึก (รายรับจากเอกสารขายเป็นยอดรวม VAT)
+//   - sales = ยอดขายก่อน VAT หลังหักส่วนลด (เอกสารขายที่ไม่ยกเลิก), other_income = รายรับที่บันทึกเอง (ไม่ได้มาจากเอกสารขาย)
+//   - revenue = รายได้ = sales + other_income, cost_of_sales = ต้นทุนสินค้าที่ขาย (ต้นทุน ณ วันที่ขาย)
+//   - gross_profit = กำไรขั้นต้น = sales − cost_of_sales
+//   - material_expense = ซื้อวัตถุดิบ (ไม่หักในกำไร), operating_expense = รายจ่ายที่หักในกำไร = expense − material_expense
+//   - profit = กำไรสุทธิ = revenue − cost_of_sales − operating_expense
 type Summary struct {
-	Month   string  `json:"month"`
-	Income  float64 `json:"income"`
-	Expense float64 `json:"expense"`
-	Profit  float64 `json:"profit"`
+	Month            string  `json:"month"`
+	Income           float64 `json:"income"`
+	Expense          float64 `json:"expense"`
+	Sales            float64 `json:"sales"`
+	OtherIncome      float64 `json:"other_income"`
+	Revenue          float64 `json:"revenue"`
+	CostOfSales      float64 `json:"cost_of_sales"`
+	GrossProfit      float64 `json:"gross_profit"`
+	MaterialExpense  float64 `json:"material_expense"`
+	OperatingExpense float64 `json:"operating_expense"`
+	Profit           float64 `json:"profit"`
+}
+
+// MonthAmounts ยอดของเดือนที่อ่านจาก DB (ยังไม่ได้คิดรายได้ / กำไร) — หน้าภาพรวมใช้ด้วย
+type MonthAmounts struct {
+	Income          float64
+	Expense         float64
+	Sales           float64
+	OtherIncome     float64
+	CostOfSales     float64
+	MaterialExpense float64
 }
 
 // Validate เช็คข้อมูลก่อนบันทึก คืน error code ("" = ผ่าน)

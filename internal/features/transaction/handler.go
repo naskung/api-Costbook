@@ -6,7 +6,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/naskung/api-Costbook/internal/helpers"
-	"github.com/naskung/api-Costbook/internal/utils"
 )
 
 type Handler struct {
@@ -50,17 +49,12 @@ func (h *Handler) Summary(c *gin.Context) {
 		return
 	}
 
-	income, expense, err := h.repo.MonthTotals(c.Request.Context(), monthStart)
+	amounts, err := h.repo.MonthAmounts(c.Request.Context(), monthStart)
 	if err != nil {
 		helpers.ServerError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, Summary{
-		Month:   monthStart[:7], // "2026-10-01" → "2026-10"
-		Income:  income,
-		Expense: expense,
-		Profit:  utils.Profit(income, expense),
-	})
+	c.JSON(http.StatusOK, NewSummary(monthStart[:7], amounts)) // "2026-10-01" → "2026-10"
 }
 
 // Create POST /api/v1/transactions

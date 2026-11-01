@@ -2,7 +2,10 @@ package dashboard
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/naskung/api-Costbook/internal/features/transaction"
 )
 
 func TestPercentOf(t *testing.T) {
@@ -129,5 +132,28 @@ func TestPreviousMonthStart(t *testing.T) {
 		if got := previousMonthStart(input); got != want {
 			t.Errorf("previousMonthStart(%q) = %q ต้องได้ %q", input, got, want)
 		}
+	}
+}
+
+func TestMonthTotals(t *testing.T) {
+	amounts := transaction.MonthAmounts{Income: 1070, Expense: 1500, Sales: 1000, CostOfSales: 600, MaterialExpense: 1250}
+	got := monthTotals("2026-11", 3, amounts)
+	want := MonthTotals{
+		Month: "2026-11", Income: 1070, Expense: 1500, Profit: 150, NetSales: 1000, Bills: 3, GrossProfit: 400,
+		Revenue: 1000, CostOfSales: 600, OperatingExpense: 250,
+	}
+	if got != want {
+		t.Errorf("ได้ %+v\nต้องได้ %+v (กำไร = 1,000 − 600 − (1,500 − ซื้อวัตถุดิบ 1,250))", got, want)
+	}
+}
+
+func TestTrendMonthStarts(t *testing.T) {
+	got := trendMonthStarts("2026-02-01", 6)
+	want := []string{"2025-09-01", "2025-10-01", "2025-11-01", "2025-12-01", "2026-01-01", "2026-02-01"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("ได้ %v, ต้องได้ %v (ข้ามปีได้ เรียงเก่า → ใหม่)", got, want)
+	}
+	if one := trendMonthStarts("ผิด", 6); len(one) != 1 {
+		t.Errorf("วันที่ผิด ได้ %v, ต้องได้เดือนเดียว", one)
 	}
 }

@@ -18,7 +18,7 @@ var ErrFromInvoice = errors.New("transaction comes from an invoice")
 // monthStart = วันแรกของเดือน เช่น "2026-10-01"
 type Repository interface {
 	List(ctx context.Context, monthStart string) ([]Transaction, error)
-	MonthTotals(ctx context.Context, monthStart string) (income, expense float64, err error)
+	MonthAmounts(ctx context.Context, monthStart string) (MonthAmounts, error)
 	Create(ctx context.Context, req TransactionRequest) (Transaction, error)
 	Update(ctx context.Context, id string, req TransactionRequest) (Transaction, error)
 	Delete(ctx context.Context, id string) error
@@ -59,16 +59,31 @@ func (r *PostgresRepository) List(ctx context.Context, monthStart string) ([]Tra
 	return transactions, rows.Err()
 }
 
-func (r *PostgresRepository) MonthTotals(ctx context.Context, monthStart string) (float64, float64, error) {
-	var income, expense float64
-	err := r.db.QueryRow(ctx, `
-		SELECT
-			COALESCE(SUM(amount) FILTER (WHERE type = 'income'), 0),
-			COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0)
-		FROM transactions
-		WHERE date >= $1::date AND date < $1::date + interval '1 month'`, monthStart).
-		Scan(&income, &expense)
-	return income, expense, err
+// MonthAmountsSQL ยอดของ 1 เดือนที่ใช้คิดกำไร ($1 = วันแรกของเดือน) เรียงตรงกับ MonthAmounts
+// income / expense / รายรับที่บันทึกเอง (ไม่มี invoice_id) / ซื้อวัตถุดิบ / ยอดขายก่อน VAT / ต้นทุนสินค้าที่ขาย
+// หน้าภาพรวมใช้ SQL ตัวนี้ด้วย
+const MonthAmountsSQL = `
+	SELECT
+		COALESCE(SUM(t.amount) FILTER (WHERE t.type = 'income'), 0),
+		COALESCE(SUM(t.amount) FILTER (WHERE t.type = 'expense'), 0),
+		COALESCE(SUM(t.amount) FILTER (WHERE t.type = 'income' AND t.invoice_id IS NULL), 0),
+		COALESCE(SUM(t.amount) FILTER (WHERE t.type = 'expense' AND t.category = '` + CategoryMaterial + `'), 0),
+		COALESCE((SELECT SUM(i.subtotal) FROM invoices i
+			WHERE i.status = 'issued' AND i.issue_date >= $1::date AND i.issue_date < $1::date + interval '1 month'), 0),
+		COALESCE((SELECT SUM(ii.quantity * ii.cost_price) FROM invoice_items ii JOIN invoices i ON i.id = ii.invoice_id
+			WHERE i.status = 'issued' AND i.issue_date >= $1::date AND i.issue_date < $1::date + interval '1 month'), 0)
+	FROM transactions t
+	WHERE t.date >= $1::date AND t.date < $1::date + interval '1 month'`
+
+// ScanMonthAmounts อ่านผลของ MonthAmountsSQL
+func ScanMonthAmounts(row pgx.Row) (MonthAmounts, error) {
+	var a MonthAmounts
+	err := row.Scan(&a.Income, &a.Expense, &a.OtherIncome, &a.MaterialExpense, &a.Sales, &a.CostOfSales)
+	return a, err
+}
+
+func (r *PostgresRepository) MonthAmounts(ctx context.Context, monthStart string) (MonthAmounts, error) {
+	return ScanMonthAmounts(r.db.QueryRow(ctx, MonthAmountsSQL, monthStart))
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, req TransactionRequest) (Transaction, error) {

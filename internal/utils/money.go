@@ -8,7 +8,8 @@ func Round2(value float64) float64 {
 	return math.Round(value*100) / 100
 }
 
-// Profit กำไร = รายรับ − รายจ่าย (ใช้ทั้งสรุปรายเดือนและหน้าภาพรวม)
-func Profit(income, expense float64) float64 {
-	return Round2(income - expense)
+// NetProfit กำไรสุทธิ = รายได้ − ต้นทุนสินค้าที่ขาย − รายจ่าย (ไม่รวมซื้อวัตถุดิบ เพราะคิดอยู่ในต้นทุนสินค้าแล้ว)
+// ใช้ทั้งสรุปรายรับ-รายจ่ายและหน้าภาพรวม
+func NetProfit(revenue, costOfSales, operatingExpense float64) float64 {
+	return Round2(revenue - costOfSales - operatingExpense)
 }

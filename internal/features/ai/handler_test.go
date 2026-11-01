@@ -281,6 +281,9 @@ func TestHandler_Chat_Errors(t *testing.T) {
 		{"AI ปฏิเสธ ได้ 422", &fakeClaude{replies: []string{refusalReply}}, askBody, http.StatusUnprocessableEntity, `{"error":"ai_refused"}`},
 		{"API key ผิด ได้ 503", &fakeClaude{err: &anthropic.Error{StatusCode: http.StatusUnauthorized}}, askBody, http.StatusServiceUnavailable, `{"error":"ai_key_invalid"}`},
 		{"Claude ไม่ว่าง ได้ 503", &fakeClaude{err: &anthropic.Error{StatusCode: http.StatusTooManyRequests}}, askBody, http.StatusServiceUnavailable, `{"error":"ai_busy"}`},
+		{"เครดิตของ key หมด (400 credit balance) ได้ 503 ai_credit_low", &fakeClaude{err: claudeError(http.StatusBadRequest, "invalid_request_error", "Your credit balance is too low to access the Anthropic API.")}, askBody, http.StatusServiceUnavailable, `{"error":"ai_credit_low"}`},
+		{"billing_error ได้ 503 ai_credit_low", &fakeClaude{err: claudeError(http.StatusBadRequest, "billing_error", "billing problem")}, askBody, http.StatusServiceUnavailable, `{"error":"ai_credit_low"}`},
+		{"400 เรื่องอื่น ยังเป็น ai_error", &fakeClaude{err: claudeError(http.StatusBadRequest, "invalid_request_error", "max_tokens is too large")}, askBody, http.StatusBadGateway, `{"error":"ai_error"}`},
 		{"หมดเวลา ได้ 504", &fakeClaude{err: context.DeadlineExceeded}, askBody, http.StatusGatewayTimeout, `{"error":"ai_timeout"}`},
 	}
 	for _, tt := range tests {
@@ -407,4 +410,12 @@ func TestHandler_RequiresLogin(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("ไม่ได้ login ต้องได้ 401 ได้ %d", rec.Code)
 	}
+}
+
+// claudeError error แบบที่ Anthropic ตอบมาจริง (มี body JSON) ใช้ทดสอบการแปลง error
+func claudeError(status int, errorType, message string) *anthropic.Error {
+	apiErr := &anthropic.Error{StatusCode: status}
+	body := `{"type":"error","error":{"type":"` + errorType + `","message":"` + message + `"}}`
+	_ = apiErr.UnmarshalJSON([]byte(body))
+	return apiErr
 }

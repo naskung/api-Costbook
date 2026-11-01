@@ -175,7 +175,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | 422 | AI ปฏิเสธคำขอ (นโยบายความปลอดภัย) | `ai_refused` |
 | 500 | server พัง | `server_error` (ใช้ `helpers.ServerError` → error จริงลง log ไม่ส่งให้ client) |
 | 502 | AI ตอบไม่ครบ / เรียก Claude ไม่สำเร็จ | `ai_no_result`, `ai_error` (รายละเอียดลง log) |
-| 503 | ไม่มี AI ให้ใช้ / key ผิด / โควตาฟรีหมด / AI ไม่ว่าง | `ai_not_configured`, `ai_key_invalid`, `ai_quota_exceeded` (Gemini ฟรีใช้เกินโควตา), `ai_busy` |
+| 503 | ไม่มี AI ให้ใช้ / key ผิด / เครดิตหมด / โควตาฟรีหมด / AI ไม่ว่าง | `ai_not_configured`, `ai_key_invalid`, `ai_credit_low` (เครดิตของ key Claude หมด — Anthropic ตอบ 400 "credit balance is too low" หรือ `billing_error`), `ai_quota_exceeded` (Gemini ฟรีใช้เกินโควตา), `ai_busy` |
 | 504 | AI ใช้เวลานานเกิน | `ai_timeout` |
 
 ---
@@ -338,7 +338,7 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 **key ของร้าน** (`PUT` / `DELETE /ai/key`):
 
 - ต้องขึ้นต้นด้วย `sk-ant-` ไม่มีช่องว่าง (`validClaudeKey`) ไม่ใช่ → 400 `ai_key_format_invalid`
-- ลอง key กับ Anthropic ก่อน (`Claude.CheckKey` → `Models.List` ไม่เสียเงิน) ไม่ผ่าน → 400 `ai_key_invalid` ไม่บันทึก
+- ลอง key กับ Anthropic ก่อน (`Claude.CheckKey` → `Models.List` ไม่เสียเงิน) ไม่ผ่าน → 400 `ai_key_invalid` ไม่บันทึก — **key ที่เครดิตหมดยังผ่านขั้นนี้** (ขอรายชื่อรุ่นไม่ใช้เครดิต) จะรู้ตอนแชท / เช็คราคา → 503 `ai_credit_low`
 - เก็บแบบเข้ารหัส AES-256-GCM (`utils.Encrypt` / `Decrypt`, กุญแจ = SHA-256 ของ `JWT_SECRET`) — API ไม่ส่ง key กลับเลย ส่งแค่ 4 ตัวท้าย (`key_hint`) / `GET /company` ไม่มี `ai_key`
 - ถอดรหัสไม่ได้ (เช่น เปลี่ยน `JWT_SECRET`) → ลง log แล้วถือว่าไม่มี key (ร้านต้องใส่ใหม่) ไม่ทำให้ AI พัง
 

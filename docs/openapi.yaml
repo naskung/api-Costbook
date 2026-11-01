@@ -1759,7 +1759,7 @@ components:
             $ref: "#/components/schemas/Error"
           example: { error: ai_no_result }
     AIUnavailable:
-      description: "ไม่มี AI ให้ใช้ (ai_not_configured) / API key ผิด (ai_key_invalid) / AI ไม่ว่าง ลองใหม่ทีหลัง (ai_busy) / โควตา AI ฟรีหมด (ai_quota_exceeded)"
+      description: "ไม่มี AI ให้ใช้ (ai_not_configured) / API key ผิด (ai_key_invalid) / เครดิตของ key Claude หมด (ai_credit_low) / AI ไม่ว่าง ลองใหม่ทีหลัง (ai_busy) / โควตา AI ฟรีหมด (ai_quota_exceeded)"
       content:
         application/json:
           schema:

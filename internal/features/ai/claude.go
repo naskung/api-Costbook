@@ -99,9 +99,11 @@ func writeGeminiError(c *gin.Context, err *GeminiError) {
 }
 
 // writeClaudeAPIError error ที่ API ของ Claude ตอบกลับมา
-// 401 / 403 = API key ผิด, 429 / 5xx = Claude ไม่ว่าง (ลองใหม่ทีหลัง), อื่น ๆ = เขียนลง log แล้วตอบ ai_error
+// เครดิตหมด = ai_credit_low, 401 / 403 = API key ผิด, 429 / 5xx = Claude ไม่ว่าง (ลองใหม่ทีหลัง), อื่น ๆ = เขียนลง log แล้วตอบ ai_error
 func writeClaudeAPIError(c *gin.Context, apiErr *anthropic.Error) {
 	switch {
+	case isCreditError(apiErr):
+		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_credit_low")
 	case apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden:
 		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_key_invalid")
 	case apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode >= 500:
@@ -110,4 +112,10 @@ func writeClaudeAPIError(c *gin.Context, apiErr *anthropic.Error) {
 		slog.Error("เรียก Claude ไม่สำเร็จ", "status", apiErr.StatusCode, "error", apiErr)
 		helpers.WriteError(c, http.StatusBadGateway, "ai_error")
 	}
+}
+
+// isCreditError เครดิตของ key หมด — Anthropic ตอบ 400 ข้อความ "Your credit balance is too low ..." หรือ error แบบ billing_error
+// (ตอนบันทึก key ลองด้วยการขอรายชื่อรุ่นซึ่งไม่เสียเงิน จึงยังรู้ไม่ได้ว่าเครดิตหมด จะรู้ตอนเรียกใช้จริง)
+func isCreditError(apiErr *anthropic.Error) bool {
+	return apiErr.Type() == anthropic.ErrorTypeBillingError || strings.Contains(apiErr.RawJSON(), "credit balance")
 }

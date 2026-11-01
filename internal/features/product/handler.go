@@ -19,6 +19,7 @@ func NewHandler(repo Repository) *Handler {
 // RegisterRoutes ต่อ route ของสินค้าเข้ากับกลุ่ม /api/v1 (ทุก route ต้อง login)
 func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) {
 	api.GET("/products", authRequired, h.List)
+	api.GET("/products/counts", authRequired, h.Counts)
 	api.GET("/products/:id", authRequired, h.Get)
 	api.POST("/products", authRequired, h.Create)
 	api.PUT("/products/:id", authRequired, h.Update)
@@ -28,14 +29,41 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 	api.DELETE("/products/:id/image", authRequired, h.DeleteImage)
 }
 
-// List GET /api/v1/products
+// List GET /api/v1/products?q=&category_id=&kind=sale|material&low=true&limit=20&offset=0
+// ไม่ส่งอะไรเลย = สินค้าทั้งหมด (หน้าขาย / ต้นทุน / AI ใช้แบบนี้) / หน้ารายการสินค้าโหลดทีละหน้าพร้อมตัวกรอง
 func (h *Handler) List(c *gin.Context) {
-	products, err := h.repo.List(c.Request.Context())
+	limit, offset, ok := helpers.PageParams(c)
+	if !ok {
+		return
+	}
+	filter := ListFilter{
+		Query:      c.Query("q"),
+		CategoryID: c.Query("category_id"),
+		Kind:       c.Query("kind"),
+		OnlyLow:    c.Query("low") == "true",
+		Limit:      limit,
+		Offset:     offset,
+	}
+	if code := filter.Validate(); code != "" {
+		helpers.WriteError(c, http.StatusBadRequest, code)
+		return
+	}
+	products, err := h.repo.List(c.Request.Context(), filter)
 	if err != nil {
 		helpers.ServerError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, products)
+}
+
+// Counts GET /api/v1/products/counts — จำนวนสินค้าทั้งร้าน (ทั้งหมด / สินค้าขาย / วัสดุ / ใกล้หมด)
+func (h *Handler) Counts(c *gin.Context) {
+	counts, err := h.repo.Counts(c.Request.Context())
+	if err != nil {
+		helpers.ServerError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, counts)
 }
 
 // Get GET /api/v1/products/:id

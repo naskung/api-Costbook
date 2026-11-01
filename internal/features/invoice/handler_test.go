@@ -29,13 +29,15 @@ const (
 type fakeRepository struct {
 	invoice       Invoice
 	gotMonthStart string
+	gotPage       [2]int
 	createErr     error
 	cancelErr     error
 	err           error
 }
 
-func (f *fakeRepository) List(ctx context.Context, monthStart string) ([]InvoiceSummary, error) {
+func (f *fakeRepository) List(ctx context.Context, monthStart string, limit, offset int) ([]InvoiceSummary, error) {
 	f.gotMonthStart = monthStart
+	f.gotPage = [2]int{limit, offset}
 	return []InvoiceSummary{}, f.err
 }
 
@@ -108,6 +110,18 @@ func TestHandler_List(t *testing.T) {
 	}
 	if repo.gotMonthStart != "2026-10-01" {
 		t.Errorf("monthStart = %q, ต้องได้ 2026-10-01", repo.gotMonthStart)
+	}
+}
+
+func TestHandler_List_Page(t *testing.T) {
+	repo := issuedRepo()
+	sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/invoices?month=2026-10&limit=20&offset=40", "")
+	if repo.gotPage != [2]int{20, 40} {
+		t.Errorf("ต้องส่ง limit / offset ต่อให้ repository ได้ %v", repo.gotPage)
+	}
+	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/invoices?limit=abc", "")
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != `{"error":"page_invalid"}` {
+		t.Errorf("limit ผิดต้องได้ 400 page_invalid ได้ %d %s", rec.Code, rec.Body.String())
 	}
 }
 

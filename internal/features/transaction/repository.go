@@ -17,7 +17,8 @@ var ErrFromInvoice = errors.New("transaction comes from an invoice")
 // Repository คือรายการคำสั่งที่คุยกับ DB
 // monthStart = วันแรกของเดือน เช่น "2026-10-01"
 type Repository interface {
-	List(ctx context.Context, monthStart string) ([]Transaction, error)
+	// limit / offset = โหลดทีละหน้า (limit 0 = ทั้งเดือน)
+	List(ctx context.Context, monthStart string, limit, offset int) ([]Transaction, error)
 	MonthAmounts(ctx context.Context, monthStart string) (MonthAmounts, error)
 	Create(ctx context.Context, req TransactionRequest) (Transaction, error)
 	Update(ctx context.Context, id string, req TransactionRequest) (Transaction, error)
@@ -39,10 +40,12 @@ const transactionSelect = `
 	FROM transactions t
 	LEFT JOIN invoices i ON i.id = t.invoice_id`
 
-func (r *PostgresRepository) List(ctx context.Context, monthStart string) ([]Transaction, error) {
+// List ล่าสุดก่อน / id ต่อท้ายให้ลำดับตายตัว (โหลดทีละหน้าไม่ซ้ำ ไม่ข้าม) / LIMIT NULL = ไม่จำกัด
+func (r *PostgresRepository) List(ctx context.Context, monthStart string, limit, offset int) ([]Transaction, error) {
 	rows, err := r.db.Query(ctx, transactionSelect+`
 		WHERE t.date >= $1::date AND t.date < $1::date + interval '1 month'
-		ORDER BY t.date DESC, t.created_at DESC`, monthStart)
+		ORDER BY t.date DESC, t.created_at DESC, t.id
+		LIMIT NULLIF($2::int, 0) OFFSET $3`, monthStart, limit, offset)
 	if err != nil {
 		return nil, err
 	}

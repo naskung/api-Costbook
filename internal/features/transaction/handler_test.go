@@ -27,12 +27,14 @@ const (
 type fakeRepository struct {
 	transactions  []Transaction
 	gotMonthStart string
+	gotPage       [2]int
 	amounts       MonthAmounts
 	err           error // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
 }
 
-func (f *fakeRepository) List(ctx context.Context, monthStart string) ([]Transaction, error) {
+func (f *fakeRepository) List(ctx context.Context, monthStart string, limit, offset int) ([]Transaction, error) {
 	f.gotMonthStart = monthStart
+	f.gotPage = [2]int{limit, offset}
 	return f.transactions, f.err
 }
 
@@ -112,6 +114,18 @@ func TestHandler_List(t *testing.T) {
 				t.Errorf("monthStart = %q, ต้องได้ %q", repo.gotMonthStart, tt.wantMonthStart)
 			}
 		})
+	}
+}
+
+func TestHandler_List_Page(t *testing.T) {
+	repo := &fakeRepository{}
+	sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/transactions?month=2026-10&limit=20&offset=20", "")
+	if repo.gotPage != [2]int{20, 20} {
+		t.Errorf("ต้องส่ง limit / offset ต่อให้ repository ได้ %v", repo.gotPage)
+	}
+	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/transactions?offset=-1", "")
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != `{"error":"page_invalid"}` {
+		t.Errorf("offset ผิดต้องได้ 400 page_invalid ได้ %d %s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -26,15 +26,19 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 	api.POST("/invoices/:id/cancel", authRequired, h.Cancel)
 }
 
-// List GET /api/v1/invoices?month=2026-10 (ไม่ส่ง month = เดือนนี้)
+// List GET /api/v1/invoices?month=2026-10&limit=20&offset=0 (ไม่ส่ง month = เดือนนี้ / ไม่ส่ง limit = ทั้งเดือน)
 func (h *Handler) List(c *gin.Context) {
 	monthStart, ok := helpers.MonthStart(c)
 	if !ok {
 		helpers.WriteError(c, http.StatusBadRequest, "month_invalid")
 		return
 	}
+	limit, offset, ok := helpers.PageParams(c)
+	if !ok {
+		return
+	}
 
-	invoices, err := h.repo.List(c.Request.Context(), monthStart)
+	invoices, err := h.repo.List(c.Request.Context(), monthStart, limit, offset)
 	if err != nil {
 		helpers.ServerError(c, err)
 		return

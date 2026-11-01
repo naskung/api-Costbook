@@ -24,9 +24,13 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 	api.DELETE("/product-categories/:id", authRequired, h.Delete)
 }
 
-// List GET /api/v1/product-categories
+// List GET /api/v1/product-categories?limit=20&offset=0 (ไม่ส่ง limit = ทั้งหมด เช่น ปุ่มกรอง / ช่องเลือกหมวด)
 func (h *Handler) List(c *gin.Context) {
-	categories, err := h.repo.List(c.Request.Context())
+	limit, offset, ok := helpers.PageParams(c)
+	if !ok {
+		return
+	}
+	categories, err := h.repo.List(c.Request.Context(), limit, offset)
 	if err != nil {
 		helpers.ServerError(c, err)
 		return

@@ -24,10 +24,12 @@ const (
 // fakeRepository ฐานข้อมูลปลอม เก็บหมวดใน slice ใช้แทน Postgres ตอน test
 type fakeRepository struct {
 	categories []Category
+	gotPage    [2]int
 	err        error // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
 }
 
-func (f *fakeRepository) List(ctx context.Context) ([]Category, error) {
+func (f *fakeRepository) List(ctx context.Context, limit, offset int) ([]Category, error) {
+	f.gotPage = [2]int{limit, offset}
 	return f.categories, f.err
 }
 
@@ -106,6 +108,18 @@ func TestHandler_RequiresLogin(t *testing.T) {
 	rec := httptest.NewRecorder()
 	newTestRouter(printRepo()).ServeHTTP(rec, req)
 	checkError(t, rec, http.StatusUnauthorized, "unauthorized")
+}
+
+func TestHandler_List_Page(t *testing.T) {
+	repo := &fakeRepository{}
+	sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/product-categories?limit=20&offset=20", "")
+	if repo.gotPage != [2]int{20, 20} {
+		t.Errorf("ต้องส่ง limit / offset ต่อให้ repository ได้ %v", repo.gotPage)
+	}
+	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/product-categories?limit=999", "")
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != `{"error":"page_invalid"}` {
+		t.Errorf("limit เกินต้องได้ 400 page_invalid ได้ %d %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestHandler_List(t *testing.T) {

@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.12.0
+  version: 0.13.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -579,10 +579,35 @@ paths:
   /products:
     get:
       tags: [product]
-      summary: รายการสินค้าทั้งหมด (เรียงตามชื่อ)
+      summary: รายการสินค้า (เรียงตามชื่อ) — ไม่ส่งอะไร = ทั้งหมด / หน้ารายการสินค้าโหลดทีละ 20 พร้อมตัวกรอง
       operationId: listProducts
       security:
         - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          description: ค้นจากชื่อ / รหัส / หมวด / รายละเอียด / ค่าในช่องข้อมูลเพิ่มเติม (ไม่สนตัวพิมพ์เล็ก-ใหญ่)
+          schema:
+            type: string
+        - name: category_id
+          in: query
+          description: เฉพาะหมวดนี้ (ไม่ส่ง = ทุกหมวด)
+          schema:
+            type: string
+            format: uuid
+        - name: kind
+          in: query
+          description: sale = เฉพาะสินค้าที่ขาย / material = เฉพาะวัสดุ (ไม่ส่ง = ทั้งหมด)
+          schema:
+            type: string
+            enum: [sale, material]
+        - name: low
+          in: query
+          description: true = เฉพาะใกล้หมด (นับสต็อก และคงเหลือ ≤ ขั้นต่ำ)
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: รายการสินค้า (ไม่มีสินค้า = [])
@@ -592,6 +617,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/ProductListBadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -622,6 +649,25 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "409":
           $ref: "#/components/responses/ProductCodeTaken"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /products/counts:
+    get:
+      tags: [product]
+      summary: จำนวนสินค้าทั้งร้าน (ไว้ทำตัวเลขบนแท็บ ทั้งหมด / สินค้าขาย / วัสดุ และปุ่มเฉพาะใกล้หมด)
+      operationId: countProducts
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: จำนวนสินค้า (ไม่สนตัวกรอง)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductCounts"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -997,10 +1043,13 @@ paths:
   /product-categories:
     get:
       tags: [category]
-      summary: หมวดหมู่สินค้าทั้งหมด (เรียงตามชื่อ) + จำนวนสินค้าในแต่ละหมวด
+      summary: หมวดหมู่สินค้า (เรียงตามชื่อ) + จำนวนสินค้าในแต่ละหมวด — ไม่ส่ง limit = ทั้งหมด
       operationId: listProductCategories
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: หมวดทั้งหมด
@@ -1010,6 +1059,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ProductCategory"
+        "400":
+          $ref: "#/components/responses/PageInvalid"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -1213,7 +1264,7 @@ paths:
   /stock/movements:
     get:
       tags: [stock]
-      summary: ประวัติรับเข้า / เบิกออก ล่าสุด 200 รายการ
+      summary: ประวัติรับเข้า / เบิกออก (ล่าสุดก่อน) — ไม่ส่ง limit = ล่าสุด 200 รายการ
       operationId: listStockMovements
       security:
         - bearerAuth: []
@@ -1224,6 +1275,8 @@ paths:
           schema:
             type: string
             format: uuid
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: ประวัติ (ล่าสุดอยู่บน)
@@ -1233,6 +1286,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Movement"
+        "400":
+          $ref: "#/components/responses/PageInvalid"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -1327,6 +1382,8 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/Month"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: รายการของเดือน
@@ -1337,7 +1394,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/Transaction"
         "400":
-          $ref: "#/components/responses/MonthInvalid"
+          $ref: "#/components/responses/MonthOrPageInvalid"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -1452,6 +1509,8 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/Month"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: รายการใบกำกับ (ข้อมูลย่อ)
@@ -1462,7 +1521,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/InvoiceSummary"
         "400":
-          $ref: "#/components/responses/MonthInvalid"
+          $ref: "#/components/responses/MonthOrPageInvalid"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -1821,6 +1880,23 @@ components:
       schema:
         type: string
         format: uuid
+    Limit:
+      name: limit
+      in: query
+      description: "เอากี่รายการ (โหลดทีละหน้า เช่น 20) — ไม่ส่ง = ทั้งหมด / มากสุด 200"
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 200
+        example: 20
+    Offset:
+      name: offset
+      in: query
+      description: "ข้ามไปกี่รายการ (หน้า 2 ทีละ 20 = 20) — ไม่ส่ง = 0 / ได้น้อยกว่า limit = หมดแล้ว"
+      schema:
+        type: integer
+        minimum: 0
+        example: 0
     Month:
       name: month
       in: query
@@ -1893,6 +1969,37 @@ components:
             $ref: "#/components/schemas/Error"
           example: { error: server_error }
 
+    PageInvalid:
+      description: "limit / offset ไม่ใช่ตัวเลข ติดลบ หรือ limit เกิน 200"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: page_invalid }
+    MonthOrPageInvalid:
+      description: "month ผิดรูปแบบ (ต้องเป็น 2026-10) หรือ limit / offset ผิด"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            month_invalid:
+              value: { error: month_invalid }
+            page_invalid:
+              value: { error: page_invalid }
+    ProductListBadRequest:
+      description: ตัวกรองของรายการสินค้าผิด
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            product_kind_invalid:
+              value: { error: product_kind_invalid }
+            product_category_invalid:
+              value: { error: product_category_invalid }
+            page_invalid:
+              value: { error: page_invalid }
     MonthInvalid:
       description: "month ผิดรูปแบบ (ต้องเป็น 2026-10)"
       content:
@@ -2285,6 +2392,24 @@ components:
           type: boolean
           description: true = ใช้หน้าคำนวณต้นทุน / false = ซ่อนเมนู (ไม่ส่งมา = ใช้ค่าเดิม)
           example: true
+
+    ProductCounts:
+      type: object
+      required: [all, for_sale, material, low]
+      properties:
+        all:
+          type: integer
+          example: 8
+        for_sale:
+          type: integer
+          example: 2
+        material:
+          type: integer
+          example: 6
+        low:
+          type: integer
+          description: นับสต็อก และคงเหลือ ≤ ขั้นต่ำ
+          example: 8
 
     Product:
       type: object

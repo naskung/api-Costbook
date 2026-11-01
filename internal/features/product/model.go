@@ -118,3 +118,47 @@ func (req ProductRequest) customFields() map[string]string {
 	}
 	return req.CustomFields
 }
+
+// kind ของรายการสินค้า (?kind=) — sale = สินค้าที่ขาย / material = วัสดุ (ไม่ขาย) / ว่าง = ทั้งหมด
+const (
+	KindForSale  = "sale"
+	KindMaterial = "material"
+)
+
+// ListFilter ตัวกรองของรายการสินค้า (ค่าว่าง = ไม่กรอง / Limit 0 = ทั้งหมด)
+// Query ค้นจาก ชื่อ / รหัส / หมวด / รายละเอียด / ค่าในช่องข้อมูลเพิ่มเติม (ไม่สนตัวพิมพ์เล็ก-ใหญ่ เหมือนที่หน้าเว็บเคยค้นเอง)
+// OnlyLow = เฉพาะใกล้หมด (นับสต็อก และคงเหลือ ≤ ขั้นต่ำ)
+type ListFilter struct {
+	Query      string
+	CategoryID string
+	Kind       string
+	OnlyLow    bool
+	Limit      int
+	Offset     int
+}
+
+// Validate คืน error code ("" = ผ่าน)
+func (f ListFilter) Validate() string {
+	if f.Kind != "" && f.Kind != KindForSale && f.Kind != KindMaterial {
+		return "product_kind_invalid"
+	}
+	if f.CategoryID != "" && !utils.IsUUID(f.CategoryID) {
+		return "product_category_invalid"
+	}
+	return ""
+}
+
+// likePattern คำค้นสำหรับ ILIKE "มีคำนี้อยู่ตรงไหนก็ได้" — ตัวอักษรพิเศษของ LIKE (\ % _) ให้ค้นเป็นตัวอักษรธรรมดา
+// เช่น "50%" → "%50\%%" (ไม่ใช่ "50 อะไรก็ได้")
+func likePattern(query string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.TrimSpace(query))
+	return "%" + escaped + "%"
+}
+
+// Counts จำนวนสินค้าทั้งร้าน ไว้ทำตัวเลขบนแท็บ (ทั้งหมด / สินค้าขาย / วัสดุ) และปุ่มเฉพาะใกล้หมด
+type Counts struct {
+	All      int `json:"all"`
+	ForSale  int `json:"for_sale"`
+	Material int `json:"material"`
+	Low      int `json:"low"`
+}

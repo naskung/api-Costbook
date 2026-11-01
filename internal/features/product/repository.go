@@ -3,6 +3,7 @@ package product
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -34,7 +35,8 @@ const uniqueViolation = "23505"
 // Repository คือรายการคำสั่งที่คุยกับ DB
 // ทำเป็น interface เพื่อให้ตอน test ใช้ fakeRepository แทน DB จริงได้
 type Repository interface {
-	List(ctx context.Context) ([]Product, error)
+	List(ctx context.Context, filter ListFilter) ([]Product, error)
+	Counts(ctx context.Context) (Counts, error)
 	FindByID(ctx context.Context, id string) (Product, error)
 	Create(ctx context.Context, req ProductRequest) (Product, error)
 	Update(ctx context.Context, id string, req ProductRequest) (Product, error)
@@ -63,8 +65,24 @@ const withCategory = ` LEFT JOIN product_categories c ON c.id = p.category_id`
 // selectSaved อ่านสินค้าที่เพิ่ง INSERT / UPDATE ใน CTE ชื่อ p พร้อมชื่อหมวด
 const selectSaved = ` SELECT ` + productColumns + ` FROM p` + withCategory
 
-func (r *PostgresRepository) List(ctx context.Context) ([]Product, error) {
-	rows, err := r.db.Query(ctx, `SELECT `+productColumns+` FROM products p`+withCategory+` ORDER BY p.name`)
+// listFilter เงื่อนไขของ ListFilter ($1 คำค้น / $2 pattern ของคำค้น / $3 หมวด / $4 kind / $5 เฉพาะใกล้หมด)
+// ช่องข้อมูลเพิ่มเติมเป็น JSONB {"<id ช่อง>": "ค่า"} → ค้นจากค่าทุกช่อง (jsonb_each_text)
+const listFilter = `
+	WHERE ($1::text = '' OR p.name ILIKE $2 OR p.code ILIKE $2 OR COALESCE(c.name, '') ILIKE $2 OR p.description ILIKE $2
+			OR EXISTS (SELECT 1 FROM jsonb_each_text(
+				CASE WHEN jsonb_typeof(p.custom_fields) = 'object' THEN p.custom_fields ELSE '{}' END) f
+				WHERE f.value ILIKE $2))
+		AND ($3::text = '' OR p.category_id::text = $3)
+		AND ($4::text = '' OR p.for_sale = ($4 = '` + KindForSale + `'))
+		AND (NOT $5::boolean OR (p.track_stock AND p.stock <= p.min_stock))`
+
+// List เรียงตามชื่อ / id ต่อท้ายให้ลำดับตายตัว (โหลดทีละหน้าไม่ซ้ำ ไม่ข้าม) / LIMIT NULL = ไม่จำกัด
+func (r *PostgresRepository) List(ctx context.Context, filter ListFilter) ([]Product, error) {
+	query := strings.TrimSpace(filter.Query)
+	rows, err := r.db.Query(ctx, `SELECT `+productColumns+` FROM products p`+withCategory+listFilter+`
+		ORDER BY p.name, p.id
+		LIMIT NULLIF($6::int, 0) OFFSET $7`,
+		query, likePattern(query), filter.CategoryID, filter.Kind, filter.OnlyLow, filter.Limit, filter.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +97,16 @@ func (r *PostgresRepository) List(ctx context.Context) ([]Product, error) {
 		products = append(products, p)
 	}
 	return products, rows.Err()
+}
+
+// Counts นับสินค้าทั้งร้าน (ไม่สนตัวกรอง) ไว้ทำตัวเลขบนแท็บ / ปุ่มเฉพาะใกล้หมด
+func (r *PostgresRepository) Counts(ctx context.Context) (Counts, error) {
+	var counts Counts
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE for_sale), COUNT(*) FILTER (WHERE NOT for_sale),
+			COUNT(*) FILTER (WHERE track_stock AND stock <= min_stock)
+		FROM products`).Scan(&counts.All, &counts.ForSale, &counts.Material, &counts.Low)
+	return counts, err
 }
 
 func (r *PostgresRepository) FindByID(ctx context.Context, id string) (Product, error) {

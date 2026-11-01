@@ -83,3 +83,35 @@ func TestProductRequest_ForSale(t *testing.T) {
 		t.Error("ส่ง for_sale = false ต้องเป็นวัสดุ (ไม่ขาย)")
 	}
 }
+
+func TestListFilter_Validate(t *testing.T) {
+	tests := []struct {
+		name   string
+		filter ListFilter
+		want   string
+	}{
+		{"ไม่กรองอะไร ผ่าน", ListFilter{}, ""},
+		{"สินค้าขาย / วัสดุ ผ่าน", ListFilter{Kind: KindMaterial}, ""},
+		{"kind ไม่มีจริง", ListFilter{Kind: "food"}, "product_kind_invalid"},
+		{"หมวดไม่ใช่ UUID", ListFilter{CategoryID: "drink"}, "product_category_invalid"},
+	}
+	for _, tt := range tests {
+		if got := tt.filter.Validate(); got != tt.want {
+			t.Errorf("%s: ได้ %q ต้องได้ %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestLikePattern(t *testing.T) {
+	tests := map[string]string{
+		" กาแฟ ":  "%กาแฟ%",
+		"50%":     `%50\%%`,
+		"a_b":     `%a\_b%`,
+		`c:\temp`: `%c:\\temp%`,
+	}
+	for query, want := range tests {
+		if got := likePattern(query); got != want {
+			t.Errorf("likePattern(%q) = %q ต้องได้ %q", query, got, want)
+		}
+	}
+}

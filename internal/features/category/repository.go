@@ -20,7 +20,8 @@ const uniqueViolation = "23505"
 
 // Repository คือรายการคำสั่งที่คุยกับ DB (test ใช้ fakeRepository แทน)
 type Repository interface {
-	List(ctx context.Context) ([]Category, error)
+	// limit / offset = โหลดทีละหน้า (limit 0 = ทั้งหมด)
+	List(ctx context.Context, limit, offset int) ([]Category, error)
 	Create(ctx context.Context, req CategoryRequest) (Category, error)
 	Update(ctx context.Context, id string, req CategoryRequest) (Category, error)
 	Delete(ctx context.Context, id string) error
@@ -40,9 +41,11 @@ const selectCategories = `
 	FROM product_categories c
 	LEFT JOIN products p ON p.category_id = c.id`
 
-func (r *PostgresRepository) List(ctx context.Context) ([]Category, error) {
-	// เรียงตามรหัสตัวอักษร (COLLATE "C") — collation เริ่มต้นของบางเครื่องเรียงภาษาไทยเพี้ยน
-	rows, err := r.db.Query(ctx, selectCategories+` GROUP BY c.id ORDER BY c.name COLLATE "C"`)
+func (r *PostgresRepository) List(ctx context.Context, limit, offset int) ([]Category, error) {
+	// เรียงตามรหัสตัวอักษร (COLLATE "C") — collation เริ่มต้นของบางเครื่องเรียงภาษาไทยเพี้ยน / id ต่อท้ายให้ลำดับตายตัว
+	rows, err := r.db.Query(ctx, selectCategories+`
+		GROUP BY c.id ORDER BY c.name COLLATE "C", c.id
+		LIMIT NULLIF($1::int, 0) OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, err
 	}

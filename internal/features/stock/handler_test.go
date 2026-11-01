@@ -29,6 +29,7 @@ type fakeRepository struct {
 	gotSkip    bool
 	gotOnlyLow bool
 	gotProduct string
+	gotPage    [2]int
 	err        error // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
 }
 
@@ -37,8 +38,9 @@ func (f *fakeRepository) List(ctx context.Context, onlyLow bool) ([]StockItem, e
 	return []StockItem{{ProductID: coffeeID, Name: "กาแฟ", Stock: f.stock[coffeeID]}}, f.err
 }
 
-func (f *fakeRepository) Movements(ctx context.Context, productID string) ([]Movement, error) {
+func (f *fakeRepository) Movements(ctx context.Context, productID string, limit, offset int) ([]Movement, error) {
 	f.gotProduct = productID
+	f.gotPage = [2]int{limit, offset}
 	return []Movement{}, f.err
 }
 
@@ -126,6 +128,18 @@ func TestHandler_List_DBError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, ต้องได้ %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestHandler_Movements_Page(t *testing.T) {
+	repo := coffeeRepo()
+	sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/stock/movements?limit=20&offset=60", "")
+	if repo.gotPage != [2]int{20, 60} {
+		t.Errorf("ต้องส่ง limit / offset ต่อให้ repository ได้ %v", repo.gotPage)
+	}
+	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/stock/movements?limit=x", "")
+	if rec.Code != http.StatusBadRequest || rec.Body.String() != `{"error":"page_invalid"}` {
+		t.Errorf("limit ผิดต้องได้ 400 page_invalid ได้ %d %s", rec.Code, rec.Body.String())
 	}
 }
 

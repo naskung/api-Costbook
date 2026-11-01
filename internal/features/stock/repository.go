@@ -22,7 +22,8 @@ var ErrNotTracked = errors.New("product does not track stock")
 // ทำเป็น interface เพื่อให้ตอน test ใช้ fakeRepository แทน DB จริงได้
 type Repository interface {
 	List(ctx context.Context, onlyLow bool) ([]StockItem, error)
-	Movements(ctx context.Context, productID string) ([]Movement, error)
+	// limit / offset = โหลดทีละหน้า (limit 0 = ล่าสุด movementDefaultLimit รายการ)
+	Movements(ctx context.Context, productID string, limit, offset int) ([]Movement, error)
 	AddMovement(ctx context.Context, movementType string, req MovementRequest) (Movement, error)
 }
 
@@ -77,12 +78,18 @@ const movementSelect = `
 		WHERE ii.invoice_id = m.invoice_id AND ii.product_id = m.product_id
 	) s ON m.type = 'out' AND NOT m.is_material AND i.status = 'issued'`
 
-// Movements ประวัติล่าสุด 200 รายการ (productID ว่าง = ทุกสินค้า)
-func (r *PostgresRepository) Movements(ctx context.Context, productID string) ([]Movement, error) {
+// movementDefaultLimit ไม่ส่ง limit → ประวัติล่าสุดเท่านี้ (ประวัติยาวขึ้นเรื่อย ๆ ไม่ให้ส่งทีเดียวทั้งหมด)
+const movementDefaultLimit = 200
+
+// Movements ประวัติล่าสุดก่อน (productID ว่าง = ทุกสินค้า) / id ต่อท้ายให้ลำดับตายตัว (โหลดทีละหน้าไม่ซ้ำ ไม่ข้าม)
+func (r *PostgresRepository) Movements(ctx context.Context, productID string, limit, offset int) ([]Movement, error) {
+	if limit == 0 {
+		limit = movementDefaultLimit
+	}
 	rows, err := r.db.Query(ctx, movementSelect+`
 		WHERE $1 = '' OR m.product_id::text = $1
-		ORDER BY m.created_at DESC, p.name
-		LIMIT 200`, productID)
+		ORDER BY m.created_at DESC, p.name, m.id
+		LIMIT $2 OFFSET $3`, productID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

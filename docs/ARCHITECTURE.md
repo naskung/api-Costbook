@@ -196,7 +196,8 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `GET /api/v1/company/logo` | โลโก้ร้าน (ตอบเป็นรูป) — ไม่ต้อง login |
 | | `PUT /api/v1/company/logo` | อัปโหลดโลโก้ (multipart ช่อง `logo`, PNG / JPG / WebP ไม่เกิน 1 MB) |
 | | `DELETE /api/v1/company/logo` | ลบโลโก้ |
-| product ✅ | `GET /api/v1/products` | รายการสินค้า |
+| product ✅ | `GET /api/v1/products?q=&category_id=&kind=&low=&limit=&offset=` | รายการสินค้า (ไม่ส่งอะไร = ทั้งหมด / หน้ารายการสินค้าโหลดทีละ 20 พร้อมตัวกรอง) |
+| | `GET /api/v1/products/counts` | จำนวนสินค้าทั้งร้าน ทั้งหมด / สินค้าขาย / วัสดุ / ใกล้หมด (ตัวเลขบนแท็บ) |
 | | `GET /api/v1/products/{id}` | สินค้า 1 ตัว |
 | | `POST /api/v1/products` | เพิ่มสินค้า |
 | | `PUT /api/v1/products/{id}` | แก้สินค้า |
@@ -219,7 +220,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `PUT /api/v1/cost-presets/{id}` | แก้ |
 | | `DELETE /api/v1/cost-presets/{id}` | ลบ |
 | stock ✅ | `GET /api/v1/stock?low=true` | จำนวนคงเหลือ (`low=true` = เฉพาะใกล้หมด) |
-| | `GET /api/v1/stock/movements?product_id=` | ประวัติรับเข้า / เบิกออก |
+| | `GET /api/v1/stock/movements?product_id=&limit=&offset=` | ประวัติรับเข้า / เบิกออก (ไม่ส่ง limit = ล่าสุด 200) |
 | | `POST /api/v1/stock/in` | รับสินค้าเข้า |
 | | `POST /api/v1/stock/out` | เบิกสินค้าออก |
 | transaction ✅ | `GET /api/v1/transactions?month=2026-10` | รายรับ-รายจ่ายของเดือน |
@@ -256,6 +257,16 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 endpoint ที่เขียนว่า **เฉพาะเจ้าของร้าน** → role อื่นได้ 403 `forbidden` (ตอนนี้มีแค่จัดการผู้ใช้ ที่เหลือทุก role ใช้ได้เหมือนกัน)
 `?month=2026-10` ไม่ส่ง = เดือนนี้ อ่านด้วย `helpers.MonthStart(c)` ได้วันแรกของเดือน `"2026-10-01"` ไปใช้ใน SQL: `date >= $1::date AND date < $1::date + interval '1 month'`
 รายละเอียด field ของทุก endpoint ดูใน Swagger (`docs/openapi.yaml`)
+
+### โหลดทีละหน้า (pagination) — ผู้ใช้ขอ 2026-11-02 "ส่งทีละ 20 เลื่อนลงแล้วโหลดเพิ่ม"
+
+- รายการที่ยาวได้เรื่อย ๆ รับ `?limit=` (เอากี่รายการ) + `?offset=` (ข้ามไปกี่รายการ) — `helpers.PageParams(c)`: ไม่ส่ง = 0 / ไม่ใช่ตัวเลข ติดลบ หรือ limit เกิน 200 → 400 `page_invalid`
+- **ไม่ส่ง limit = ทั้งหมดเหมือนเดิม** (หน้าขาย / คำนวณต้นทุน / ออกเอกสาร / AI ยังต้องใช้สินค้าทั้งหมด) — SQL `LIMIT NULLIF($n::int, 0) OFFSET $m` (LIMIT NULL = ไม่จำกัด) / ยกเว้นประวัติสต็อก ไม่ส่ง = ล่าสุด 200 (`movementDefaultLimit`)
+- ไม่ส่งจำนวนทั้งหมดกลับมา: ได้ครบตาม limit = อาจยังมีอีก / ได้น้อยกว่า = หมดแล้ว (หน้าเว็บขอหน้าต่อไปเมื่อเลื่อนใกล้ล่างสุด)
+- ทุกรายการ ORDER BY ต่อท้ายด้วย `id` → ลำดับตายตัว โหลดทีละหน้าไม่ซ้ำ ไม่ข้าม (เช่น ชื่อซ้ำกัน / เวลาเดียวกัน)
+- ใช้กับ: `/products`, `/product-categories`, `/stock/movements`, `/transactions`, `/invoices` (สองตัวหลังต่อเดือน + `month`)
+- **สินค้า**: ค้นหา / กรองย้ายมาทำที่ API (เดิมหน้าเว็บโหลดทั้งหมดแล้วกรองเอง) — `product.ListFilter`: `q` ค้นจากชื่อ / รหัส / หมวด / รายละเอียด / ค่าในช่องข้อมูลเพิ่มเติม (`ILIKE`, `jsonb_each_text`, ตัวอักษรพิเศษ `\ % _` ค้นเป็นตัวอักษรธรรมดา — `likePattern`), `category_id`, `kind` = `sale` / `material` (ผิด → 400 `product_kind_invalid`), `low=true` = นับสต็อกและคงเหลือ ≤ ขั้นต่ำ / `GET /products/counts` นับทั้งร้าน (ไม่สนตัวกรอง) ไว้ทำตัวเลขบนแท็บ
+- ลองกับสำเนา DB จริงแล้ว 20/20 (แบ่งหน้าต่อกันครบไม่ซ้ำ, counts ตรง, กรองแต่ละแบบ, ค้นไทย / อังกฤษไม่สนตัวพิมพ์, `%` ไม่ใช่ทุกอย่าง, ทุกรายการแบ่งหน้าตรงกับแบบไม่แบ่ง)
 
 ### รายละเอียด auth (ทำแล้ว)
 

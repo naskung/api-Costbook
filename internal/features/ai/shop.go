@@ -45,11 +45,11 @@ func (s Shop) Fields(ctx context.Context) ([]field.ProductField, error) {
 }
 
 func (s Shop) Categories(ctx context.Context) ([]category.Category, error) {
-	return s.CategoryRepo.List(ctx)
+	return s.CategoryRepo.List(ctx, 0, 0)
 }
 
 func (s Shop) Products(ctx context.Context) ([]product.Product, error) {
-	return s.ProductRepo.List(ctx)
+	return s.ProductRepo.List(ctx, product.ListFilter{})
 }
 
 // Product ไม่เจอสินค้า → product.ErrNotFound
@@ -66,5 +66,5 @@ func (s Shop) Dashboard(ctx context.Context, monthStart string) (dashboard.Dashb
 }
 
 func (s Shop) Transactions(ctx context.Context, monthStart string) ([]transaction.Transaction, error) {
-	return s.TransactionRepo.List(ctx, monthStart)
+	return s.TransactionRepo.List(ctx, monthStart, 0, 0)
 }

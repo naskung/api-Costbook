@@ -37,15 +37,19 @@ func (h *Handler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
-// Movements GET /api/v1/stock/movements?product_id= (ไม่ส่ง product_id = ทุกสินค้า)
+// Movements GET /api/v1/stock/movements?product_id=&limit=20&offset=0 (ไม่ส่ง product_id = ทุกสินค้า / ไม่ส่ง limit = ล่าสุด 200)
 func (h *Handler) Movements(c *gin.Context) {
 	productID := c.Query("product_id")
 	if productID != "" && !utils.IsUUID(productID) {
 		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
 		return
 	}
+	limit, offset, ok := helpers.PageParams(c)
+	if !ok {
+		return
+	}
 
-	movements, err := h.repo.Movements(c.Request.Context(), productID)
+	movements, err := h.repo.Movements(c.Request.Context(), productID, limit, offset)
 	if err != nil {
 		helpers.ServerError(c, err)
 		return

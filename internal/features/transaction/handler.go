@@ -25,15 +25,19 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 	api.DELETE("/transactions/:id", authRequired, h.Delete)
 }
 
-// List GET /api/v1/transactions?month=2026-10 (ไม่ส่ง month = เดือนนี้)
+// List GET /api/v1/transactions?month=2026-10&limit=20&offset=0 (ไม่ส่ง month = เดือนนี้ / ไม่ส่ง limit = ทั้งเดือน)
 func (h *Handler) List(c *gin.Context) {
 	monthStart, ok := helpers.MonthStart(c)
 	if !ok {
 		helpers.WriteError(c, http.StatusBadRequest, "month_invalid")
 		return
 	}
+	limit, offset, ok := helpers.PageParams(c)
+	if !ok {
+		return
+	}
 
-	transactions, err := h.repo.List(c.Request.Context(), monthStart)
+	transactions, err := h.repo.List(c.Request.Context(), monthStart, limit, offset)
 	if err != nil {
 		helpers.ServerError(c, err)
 		return

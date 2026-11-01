@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -25,14 +26,20 @@ const (
 
 // fakeRepository ฐานข้อมูลปลอม เก็บสินค้าใน slice ใช้แทน Postgres ตอน test
 type fakeRepository struct {
-	products []Product
-	inUseID  string // id สินค้าที่จำลองว่าเคยอยู่ในใบกำกับ
-	image    Image  // รูปของสินค้า (ใช้รูปเดียวทั้ง fake)
-	err      error  // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
+	products  []Product
+	inUseID   string // id สินค้าที่จำลองว่าเคยอยู่ในใบกำกับ
+	image     Image  // รูปของสินค้า (ใช้รูปเดียวทั้ง fake)
+	gotFilter ListFilter
+	err       error // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
 }
 
-func (f *fakeRepository) List(ctx context.Context) ([]Product, error) {
+func (f *fakeRepository) List(ctx context.Context, filter ListFilter) ([]Product, error) {
+	f.gotFilter = filter
 	return f.products, f.err
+}
+
+func (f *fakeRepository) Counts(ctx context.Context) (Counts, error) {
+	return Counts{All: len(f.products), ForSale: len(f.products)}, f.err
 }
 
 func (f *fakeRepository) FindByID(ctx context.Context, id string) (Product, error) {
@@ -171,6 +178,42 @@ func TestHandler_List(t *testing.T) {
 	json.NewDecoder(rec.Body).Decode(&got)
 	if len(got) != 1 || got[0].Name != "กาแฟ" {
 		t.Errorf("ได้ %+v, ต้องได้สินค้า 1 ตัวชื่อ กาแฟ", got)
+	}
+}
+
+func TestHandler_List_Filter(t *testing.T) {
+	const drinkID = "5b8f0d4e-3c1a-4f7e-9a2b-6d1c8e0f7a3b"
+	repo := coffeeRepo()
+	path := "/api/v1/products?q=" + url.QueryEscape("กาแฟ") + "&category_id=" + drinkID + "&kind=sale&low=true&limit=20&offset=20"
+	rec := sendRequest(newTestRouter(repo), http.MethodGet, path, "")
+	want := ListFilter{Query: "กาแฟ", CategoryID: drinkID, Kind: KindForSale, OnlyLow: true, Limit: 20, Offset: 20}
+	if rec.Code != http.StatusOK || repo.gotFilter != want {
+		t.Errorf("ต้องส่งตัวกรองต่อให้ repository ได้ %d %+v", rec.Code, repo.gotFilter)
+	}
+}
+
+func TestHandler_List_BadFilter(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"kind ไม่มีจริง", "/api/v1/products?kind=x", `{"error":"product_kind_invalid"}`},
+		{"category_id ไม่ใช่ UUID", "/api/v1/products?category_id=abc", `{"error":"product_category_invalid"}`},
+		{"limit ผิด", "/api/v1/products?limit=-5", `{"error":"page_invalid"}`},
+	}
+	for _, tt := range tests {
+		rec := sendRequest(newTestRouter(coffeeRepo()), http.MethodGet, tt.path, "")
+		if rec.Code != http.StatusBadRequest || rec.Body.String() != tt.want {
+			t.Errorf("%s: ได้ %d %s ต้องได้ 400 %s", tt.name, rec.Code, rec.Body.String(), tt.want)
+		}
+	}
+}
+
+func TestHandler_Counts(t *testing.T) {
+	rec := sendRequest(newTestRouter(coffeeRepo()), http.MethodGet, "/api/v1/products/counts", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"all":1,"for_sale":1,"material":0,"low":0}` {
+		t.Errorf("ได้ %d %s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -50,3 +50,26 @@ func TestIsUUID(t *testing.T) {
 		})
 	}
 }
+
+func TestIsEmail(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{"staff@costbook.com", true},
+		{"a.b@shop.co.th", true},
+		{"", false},
+		{"staff", false},
+		{"@costbook.com", false},
+		{"staff@costbook", false},
+		{"staff@costbook.", false},
+		{"staff@.com", false},
+		{"st aff@costbook.com", false},
+		{"a@b@costbook.com", false},
+	}
+	for _, tt := range tests {
+		if got := IsEmail(tt.value); got != tt.want {
+			t.Errorf("IsEmail(%q) = %v ต้องได้ %v", tt.value, got, tt.want)
+		}
+	}
+}

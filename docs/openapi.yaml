@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.10.0
+  version: 0.11.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -21,6 +21,8 @@ tags:
     description: เช็คสถานะ API
   - name: auth
     description: login และข้อมูลผู้ใช้
+  - name: user
+    description: "โปรไฟล์ของตัวเอง (ชื่อ / รหัสผ่าน / รูป) + จัดการผู้ใช้ (เฉพาะเจ้าของร้าน) — role: owner = เจ้าของ, manager = ผู้จัดการ, staff = พนักงาน"
   - name: company
     description: ข้อมูลร้าน (ผู้ขาย) + โลโก้ ใช้บนหน้าเว็บและใบกำกับภาษี — 1 ระบบ = 1 ร้าน
   - name: product
@@ -106,6 +108,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
               example: { error: invalid_credentials }
+        "403":
+          description: รหัสถูก แต่เจ้าของร้านปิดบัญชีนี้ไว้
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: user_disabled }
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -125,6 +134,296 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /profile:
+    put:
+      tags: [user]
+      summary: แก้ชื่อของตัวเอง
+      operationId: updateProfile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileRequest"
+      responses:
+        "200":
+          description: ข้อมูลผู้ใช้หลังแก้
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "400":
+          $ref: "#/components/responses/UserBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /profile/password:
+    put:
+      tags: [user]
+      summary: เปลี่ยนรหัสผ่านของตัวเอง (ต้องใส่รหัสเดิม)
+      operationId: changePassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordRequest"
+      responses:
+        "204":
+          description: เปลี่ยนแล้ว (token เดิมยังใช้ได้)
+        "400":
+          description: "ข้อมูลผิด: ไม่ได้ใส่รหัสเดิม (password_current_required) / รหัสเดิมไม่ถูก (password_current_invalid) / รหัสใหม่สั้นเกิน 6 ตัว (password_too_short)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: password_current_invalid }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /profile/avatar:
+    put:
+      tags: [user]
+      summary: อัปโหลดรูปโปรไฟล์ของตัวเอง (แทนรูปเดิม)
+      description: ส่งแบบ `multipart/form-data` ช่องชื่อ `avatar` — PNG / JPG / WebP ไม่เกิน 1 MB (ดูจากข้างในไฟล์จริง)
+      operationId: uploadAvatar
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+                  description: ไฟล์รูป PNG / JPG / WebP ไม่เกิน 1 MB
+      responses:
+        "200":
+          description: บันทึกแล้ว ได้ผู้ใช้ที่มี avatar_version ใหม่
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "400":
+          description: "ไฟล์ไม่ถูกต้อง: avatar_required / avatar_too_large / avatar_type_invalid"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: avatar_too_large }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags: [user]
+      summary: ลบรูปโปรไฟล์ของตัวเอง
+      operationId: deleteAvatar
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ลบแล้ว ได้ผู้ใช้ที่ avatar_version = 0
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /users:
+    get:
+      tags: [user]
+      summary: ผู้ใช้ทั้งหมด (เฉพาะเจ้าของร้าน)
+      description: เรียงเจ้าของ → ผู้จัดการ → พนักงาน / บัญชีที่ใช้งานอยู่ก่อน
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: รายชื่อผู้ใช้
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ManagedUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [user]
+      summary: เพิ่มผู้ใช้ + ตั้งรหัสผ่านแรก (เฉพาะเจ้าของร้าน)
+      operationId: createUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreateRequest"
+      responses:
+        "201":
+          description: เพิ่มแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "400":
+          $ref: "#/components/responses/UserBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: อีเมลนี้มีผู้ใช้แล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: user_email_taken }
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    put:
+      tags: [user]
+      summary: แก้ชื่อ / role / เปิด-ปิดบัญชี (เฉพาะเจ้าของร้าน)
+      description: บัญชีที่ถูกปิด login ไม่ได้ (403 user_disabled) และ token เดิมใช้ไม่ได้ทันที (401) / ร้านต้องเหลือเจ้าของที่ใช้งานได้อย่างน้อย 1 คน
+      operationId: updateUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdateRequest"
+      responses:
+        "200":
+          description: แก้แล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "400":
+          $ref: "#/components/responses/UserBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+        "409":
+          description: แก้แล้วร้านจะไม่เหลือเจ้าของที่ใช้งานได้
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: user_last_owner }
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /users/{id}/password:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    put:
+      tags: [user]
+      summary: ตั้งรหัสผ่านใหม่ให้ผู้ใช้ (เฉพาะเจ้าของร้าน ไม่ต้องรู้รหัสเดิม)
+      operationId: resetUserPassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "204":
+          description: ตั้งแล้ว
+        "400":
+          description: รหัสใหม่สั้นเกิน 6 ตัว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: password_too_short }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/UserNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /users/{id}/avatar:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [user]
+      summary: ดูรูปโปรไฟล์ (ได้เป็นรูป — ทุกคนที่ login ดูได้)
+      description: ใส่ `?v=<avatar_version>` ท้าย URL เสมอ → รูปเปลี่ยนแล้ว URL เปลี่ยน browser เก็บรูปไว้ได้นาน
+      operationId: getAvatar
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: v
+          in: query
+          required: false
+          description: avatar_version ของผู้ใช้
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: ไฟล์รูป
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: ไม่มีผู้ใช้ (user_not_found) หรือยังไม่มีรูป (avatar_not_found)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: avatar_not_found }
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -1558,8 +1857,29 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
           example: { error: category_name_taken }
+    Forbidden:
+      description: role ของผู้ใช้ทำสิ่งนี้ไม่ได้ (เช่น จัดการผู้ใช้ได้เฉพาะเจ้าของร้าน)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: forbidden }
+    UserNotFound:
+      description: ไม่มีผู้ใช้นี้
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: user_not_found }
+    UserBadRequest:
+      description: "ข้อมูลผิด: user_email_invalid / user_name_required / user_name_too_long / user_role_invalid / password_too_short / invalid_json"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: user_name_required }
     Unauthorized:
-      description: ไม่มี token / token ผิด / หมดอายุ / ผู้ใช้ถูกลบ → ต้อง login ใหม่
+      description: ไม่มี token / token ผิด / หมดอายุ / ผู้ใช้ถูกลบ / บัญชีถูกปิด → ต้อง login ใหม่
       content:
         application/json:
           schema:
@@ -1814,9 +2134,62 @@ components:
         user:
           $ref: "#/components/schemas/User"
 
+    ManagedUser:
+      type: object
+      description: ผู้ใช้แบบเต็ม (หน้าจัดการผู้ใช้ / หลังแก้โปรไฟล์) — ไม่มีรหัสผ่านออกไปเด็ดขาด
+      required: [id, email, first_name, last_name, role, active, avatar_version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email, example: staff@costbook.com }
+        first_name: { type: string, example: สมชาย }
+        last_name: { type: string, example: ใจดี }
+        role: { type: string, enum: [owner, manager, staff] }
+        active: { type: boolean, description: "false = ถูกปิดบัญชี login ไม่ได้" }
+        avatar_version: { type: integer, format: int64, description: "0 = ไม่มีรูป / รูปอยู่ที่ /users/{id}/avatar?v=<avatar_version>" }
+        created_at: { type: string, format: date-time }
+
+    ProfileRequest:
+      type: object
+      required: [first_name]
+      properties:
+        first_name: { type: string, example: สมชาย, description: ห้ามว่าง ไม่เกิน 100 ตัวอักษร }
+        last_name: { type: string, example: ใจดี }
+
+    PasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string }
+        new_password: { type: string, description: อย่างน้อย 6 ตัวอักษร }
+
+    UserCreateRequest:
+      type: object
+      required: [email, first_name, role, password]
+      properties:
+        email: { type: string, format: email, example: staff@costbook.com, description: "เก็บเป็นตัวเล็ก ห้ามซ้ำ" }
+        first_name: { type: string, example: สมชาย }
+        last_name: { type: string, example: ใจดี }
+        role: { type: string, enum: [owner, manager, staff] }
+        password: { type: string, description: "รหัสผ่านแรก อย่างน้อย 6 ตัว (ผู้ใช้เปลี่ยนเองได้ที่หน้าโปรไฟล์)" }
+
+    UserUpdateRequest:
+      type: object
+      required: [first_name, role]
+      properties:
+        first_name: { type: string }
+        last_name: { type: string }
+        role: { type: string, enum: [owner, manager, staff] }
+        active: { type: boolean, description: "ไม่ส่ง = ใช้ค่าเดิม" }
+
+    ResetPasswordRequest:
+      type: object
+      required: [new_password]
+      properties:
+        new_password: { type: string, description: อย่างน้อย 6 ตัวอักษร }
+
     User:
       type: object
-      required: [id, email, first_name, last_name]
+      required: [id, email, first_name, last_name, role, avatar_version]
       properties:
         id:
           type: string
@@ -1832,6 +2205,14 @@ components:
         last_name:
           type: string
           example: CostBook
+        role:
+          type: string
+          enum: [owner, manager, staff]
+          description: owner = เจ้าของ (ทำได้ทุกอย่าง + จัดการผู้ใช้), manager = ผู้จัดการ, staff = พนักงาน
+        avatar_version:
+          type: integer
+          format: int64
+          description: "0 = ไม่มีรูปโปรไฟล์ / รูปอยู่ที่ /users/{id}/avatar?v=<avatar_version>"
 
     Company:
       type: object

@@ -48,6 +48,14 @@ func (f *fakeRepository) FindByID(ctx context.Context, id string) (User, error) 
 	return User{}, ErrNotFound
 }
 
+func (f *fakeRepository) Status(ctx context.Context, id string) (string, bool, error) {
+	user, err := f.FindByID(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return "", false, nil
+	}
+	return user.Role, user.Active, err
+}
+
 // newTestRouter สร้าง Gin router สำหรับ test: route เหมือนของจริง แต่ใช้ fakeRepository แทน DB
 func newTestRouter(repo Repository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -62,7 +70,7 @@ func newAdmin(t *testing.T) User {
 	if err != nil {
 		t.Fatalf("สร้าง hash ไม่ได้: %v", err)
 	}
-	return User{ID: "user-1", Email: "admin@costbook.com", FirstName: "Admin", LastName: "CostBook", PasswordHash: string(hash)}
+	return User{ID: "user-1", Email: "admin@costbook.com", FirstName: "Admin", LastName: "CostBook", Role: RoleOwner, Active: true, PasswordHash: string(hash)}
 }
 
 func postLogin(router *gin.Engine, body string) *httptest.ResponseRecorder {
@@ -187,5 +195,28 @@ func TestHandler_Me_NoToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, ต้องได้ %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestHandler_Login_DisabledUser(t *testing.T) {
+	disabled := newAdmin(t)
+	disabled.Active = false
+	rec := postLogin(newTestRouter(&fakeRepository{users: []User{disabled}}), `{"email":"admin@costbook.com","password":"1234"}`)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "user_disabled") {
+		t.Errorf("บัญชีถูกปิด ต้องได้ 403 user_disabled ได้ %d %s", rec.Code, rec.Body.String())
+	}
+	wrong := postLogin(newTestRouter(&fakeRepository{users: []User{disabled}}), `{"email":"admin@costbook.com","password":"wrong"}`)
+	if wrong.Code != http.StatusUnauthorized {
+		t.Errorf("รหัสผิด ไม่ต้องบอกว่าบัญชีถูกปิด ได้ %d", wrong.Code)
+	}
+}
+
+func TestHandler_Login_ReturnsRole(t *testing.T) {
+	rec := postLogin(newTestRouter(&fakeRepository{users: []User{newAdmin(t)}}), `{"email":"admin@costbook.com","password":"1234"}`)
+	if !strings.Contains(rec.Body.String(), `"role":"owner"`) || !strings.Contains(rec.Body.String(), `"avatar_version":0`) {
+		t.Errorf("ต้องส่ง role + avatar_version ให้ Flutter ได้ %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"active"`) {
+		t.Errorf("ไม่ต้องส่ง active ออกไป ได้ %s", rec.Body.String())
 	}
 }

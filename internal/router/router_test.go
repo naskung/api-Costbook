@@ -46,6 +46,8 @@ func TestRouter(t *testing.T) {
 		{"แชท AI ต้อง login ก่อน ได้ 401", http.MethodPost, "/api/v1/ai/chat", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
 		{"ใส่ key AI ต้อง login ก่อน ได้ 401", http.MethodPut, "/api/v1/ai/key", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
 		{"เช็คราคาตลาด ต้อง login ก่อน ได้ 401", http.MethodPost, "/api/v1/products/x/market", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
+		{"แก้โปรไฟล์ ต้อง login ก่อน ได้ 401", http.MethodPut, "/api/v1/profile", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
+		{"จัดการผู้ใช้ ต้อง login ก่อน ได้ 401", http.MethodGet, "/api/v1/users", "", http.StatusUnauthorized, `{"error":"unauthorized"}`},
 		{"browser ถามสิทธิ์ (OPTIONS) ได้ 204", http.MethodOptions, "/api/v1/auth/login", "", http.StatusNoContent, ""},
 	}
 

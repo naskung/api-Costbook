@@ -7,7 +7,7 @@
 
 - **เสร็จแล้ว:** Phase 0, พื้นฐาน API (server, config, router, CORS, helpers), ต่อ DB, login (`POST /auth/login`, `GET /auth/me`)
 - **รันได้แล้ว:** `make run` → `http://localhost:8080/api/v1/health`, เอกสาร Swagger: `http://localhost:8080/docs`
-- **feature ที่เสร็จ:** auth, company, product, field, cost, stock, transaction, invoice, dashboard, ai — **ครบทุกเมนูแล้ว** + **รองรับร้านหลายแบบ** + **ภาพรวมแบบละเอียด + AI เช็คราคาตลาด / แชท** (ทดสอบกับ DB จริง 58 + 43 + 33 กรณีผ่าน)
+- **feature ที่เสร็จ:** auth, user (โปรไฟล์ + role + จัดการผู้ใช้), company, product, field, cost, stock, transaction, invoice, dashboard, ai — **ครบทุกเมนูแล้ว** + **รองรับร้านหลายแบบ** + **ภาพรวมแบบละเอียด + AI เช็คราคาตลาด / แชท** (ทดสอบกับ DB จริง 58 + 43 + 33 กรณีผ่าน)
 - **AI มี 2 ตัว:** ร้านใส่ key ของ Claude เองที่หน้าตั้งค่า (เก็บเข้ารหัสใน DB) หรือ `ANTHROPIC_API_KEY` ใน `.env` → ใช้ Claude (แชท + เช็คราคาตลาด) / ไม่มี key Claude → ใช้ **Gemini ฟรี** (`GEMINI_API_KEY` ใน `.env`) แชทได้แต่ค้นเว็บไม่ได้ → เช็คราคาตลาดไม่ได้
 - **AI ยังไม่ได้ลองตอบจริง:** ยังไม่มี key — ทดสอบด้วย Claude / Gemini ปลอมใน test (ลองกับ Anthropic จริงแค่ว่า key ปลอมถูกปฏิเสธ)
 - **ยังไม่ได้ทำ:** `golang-migrate`, จำกัดขนาด request body, ไฟล์ `sql/` ของตารางใหม่, integration test ของ repository
@@ -67,6 +67,7 @@
 - [x] cost — ใบต้นทุน `GET` / `PUT /products/{id}/costs` (บันทึกทั้งใบ) + คำนวณ `cost_price` ใหม่ + test
 - [x] stock — คงเหลือ / ใกล้หมด / ประวัติ / รับเข้า / เบิกออก (ของไม่พอ 409) + test
 - [x] วัสดุในสต็อก (migration `000012_materials`): สินค้าไม่ขาย (`for_sale`), ใบต้นทุนผูกวัสดุ (`material_id`), ตัดวัสดุตอนรับเข้า / ขายงานไม่นับสต็อก + คืนตอนยกเลิก, วัสดุไม่พอ 409, ราคาวัสดุเปลี่ยน → คิดต้นทุนสินค้าที่ใช้ใหม่ + test
+- [x] user — ผู้ใช้หลายคน + role เจ้าของร้าน / ผู้จัดการ / พนักงาน (migration `000014_user_roles`): โปรไฟล์ของตัวเอง (ชื่อ / เปลี่ยนรหัสผ่าน / รูป) + เจ้าของร้านเพิ่มผู้ใช้ / แก้ role / เปิด-ปิดบัญชี / ตั้งรหัสใหม่ให้ + test
 - [x] transaction — รายรับ-รายจ่าย + สรุปรายเดือน (รายรับจากใบกำกับแก้ / ลบไม่ได้ 409) + test
 - [x] invoice — ออกใบกำกับ (transaction เดียว: รันเลข + บันทึก + ตัด stock + บันทึกรายรับ) / ยกเลิก (คืน stock + ลบรายรับ) + test
 - [x] dashboard — ตัวเลขสรุป + สินค้าใกล้หมด + test
@@ -93,6 +94,8 @@
 
 - [x] login: `users` + bcrypt + JWT (`features/auth`: `POST /auth/login`, `GET /auth/me`, token อายุ 7 วัน) + test
 - [x] `middleware/auth.go` ตรวจ token + test — route ใหม่ที่ต้อง login ให้ใส่ `authRequired` ใน router
+- [x] `middleware.Authenticated` ถามสถานะผู้ใช้จาก DB ทุก request (ปิดบัญชีแล้ว token ใช้ไม่ได้ทันที) + `middleware.RequireRole` (403 `forbidden`) + test
+- [ ] จำกัดเมนู / สิทธิ์ตาม role (รอผู้ใช้กำหนดว่า role ไหนเห็นเมนูไหน ทำอะไรได้ — ตอนนี้จำกัดแค่จัดการผู้ใช้ = เจ้าของร้าน)
 - [ ] จำกัดขนาด request body
 - [ ] (ไม่บังคับ) integration test ของ repository กับ DB จริง
 
@@ -114,7 +117,7 @@
 - [ ] deploy API และ DB ที่ไหน (เช่น Railway / Render / Fly.io / VPS + Neon / Supabase สำหรับ DB)
 - [x] ร้านเดียว หรือหลายร้าน → **1 ระบบ = 1 ร้าน** แต่ละร้านติดตั้งแยก (แบบ local) แก้ข้อมูลร้าน / โลโก้ผ่าน API หน้าเว็บไม่ต้องแก้ (ตัดสินใจ 2026-10-31)
 - [x] เก็บโลโก้ที่ไหน → ใน DB (`BYTEA`) ไม่เกิน 1 MB, PNG / JPG / WebP — ถ้าวันหลังมีรูปสินค้าเยอะค่อยย้ายไปบริการฝากไฟล์ (R2 / S3)
-- [ ] ผู้ใช้หลายคนในร้านเดียว แบ่งสิทธิ์ (admin / พนักงาน) ไหม
+- [x] ผู้ใช้หลายคนในร้านเดียว → **มี 3 role: เจ้าของร้าน / ผู้จัดการ / พนักงาน** จัดการผู้ใช้ได้เฉพาะเจ้าของร้าน ปิดบัญชีแทนการลบ (ตัดสินใจ 2026-11-01) — สิทธิ์ของแต่ละเมนูยังไม่กำหนด
 - [x] รูปแบบเลขที่ใบกำกับ → `INV-2026-0001` รันใหม่ทุกปี (ตามปีของวันที่ออกใบ) (ตัดสินใจ 2026-10-31)
 - [x] ยกเลิกใบกำกับ → ลบรายรับ + คืน stock, ใบกำกับแก้ / ลบไม่ได้, ร้านต้องมีเลขผู้เสียภาษีก่อนออกใบ (ตัดสินใจ 2026-10-31)
 - [x] เก็บต้นทุนละเอียด (`product_costs`) → คำนวณ `cost_price` ให้ (ตัดสินใจ 2026-10-31)
@@ -127,6 +130,7 @@
 
 | วันที่ | ทำอะไร | หมายเหตุ |
 |---|---|---|
+| 2026-11-01 | **ผู้ใช้หลายคน + role + โปรไฟล์** (ผู้ใช้ขอ เผื่อทำสิทธิ์ตาม role): migration `000014_user_roles` (role / active / avatar ใน `users`, ผู้ใช้เดิม = owner — **รันกับ DB จริงแล้ว**), `middleware.Authenticated` (ถาม DB ทุก request) + `RequireRole`, `auth`: login / me ส่ง `role` + `avatar_version`, ปิดบัญชี → login 403 `user_disabled`, feature ใหม่ `user` (`/profile`, `/profile/password`, `/profile/avatar`, `/users`, `/users/{id}`, `/users/{id}/password`, `/users/{id}/avatar`), ร้านต้องเหลือเจ้าของ 1 คน (409 `user_last_owner`), `utils.IsEmail`, `openapi.yaml` 0.11.0 — gofmt / vet / test ผ่านทุก package (middleware 100%) + ทดสอบกับ DB ทดสอบ (`costbook_e2e`) 31/31 กรณีผ่าน / **เพิ่มวัสดุใน DB จริง** (ผู้ใช้ขอ): เส้น PLA / PETG / TPU (กรัม), อุปกรณ์ประกอบ, บรรจุภัณฑ์, สี / กาว (ชิ้น) สต็อกเริ่ม 0 + ผูกกับใบต้นทุนพวงกุญแจ 3 บรรทัด / เคสโทรศัพท์ 2 บรรทัด (ต้นทุนเท่าเดิม) | **ต้อง restart `make run`** (โค้ดใหม่อ่านคอลัมน์ role) / **กระทบ Flutter**: หน้าโปรไฟล์ + จัดการผู้ใช้ + แถวผู้ใช้ในเมนู ทำแล้ว / วัสดุสต็อก 0 → รับสินค้าที่ผูกวัสดุเข้าสต็อกต้องรับวัสดุเข้าก่อน (หรือไม่ติ๊ก "ตัดวัสดุ") / ใบต้นทุนพวงกุญแจตั้ง "ผลิตได้ต่อรอบ" = 1 ทั้งที่ใช้เส้น 60 กรัม + ห่วง 6 + ถุง 6 → ต้นทุน 113.87 (ถ้าเป็น 6 ชิ้นต่อรอบ ≈ 19 บาท) ยังไม่ได้แก้ |
 | 2026-11-01 | **เช็คราคาตลาด: ร้านออนไลน์ (Shopee + Lazada) เป็นหลัก ของสดใช้ตลาดกลาง** (ผู้ใช้ขอ): `ai/search_plan.go` (`searchPlan`, `cleanQueries`, ค้นไม่เกิน 6 ครั้ง/สินค้า), Gemini คิดคำค้น + เลือกแหล่ง (`marketplace` / `central_market`), Tavily ค้นเฉพาะเว็บ (`SearchQuery.Sites` / `PreferSites` / `Recent` → `include_domains` / `include_domains_mode: prefer` / `time_range: month`), ผลค้นหามีป้ายแหล่ง, `marketRules` + prompt ของ Claude บอกแหล่งหลักเดียวกัน — ก่อนทำลองค้นจริง: Shopee อย่างเดียวได้ 10 ร้าน อ่านราคาได้ราวครึ่ง, Shopee + Lazada รวมกัน Lazada ไม่ติด → ค้นแยก, ตลาดกลาง + 1 เดือนล่าสุด ได้ราคาจากพาณิชย์จังหวัด / เว็บราคาเกษตร — test ใหม่ 5 กรณี + ปรับของเดิม — gofmt / vet / test ผ่านทุก package (ai 85.1%) — ลองจริงกับ DB ทดสอบ: พวงกุญแจ 3D 201 ใน 21 วินาที (Shopee + Lazada 45–153.90), หมูสามชั้น 201 ใน 19 วินาที (ตลาดกลาง 150–200 /กก. confidence high) | โควตาฟรีลดจาก ~250 เหลือ ~170 สินค้า/เดือน (ค้น 2 เว็บ) / วันนี้ทดสอบเยอะ โควตา Gemini 3.6 / 3.5 Flash เต็ม ระบบสลับไป Flash-Lite ให้ (ข้อความสรุปจาก Flash-Lite มีคำผิดปนได้) / ต้อง restart `make run` |
 | 2026-11-01 | **Gemini สลับรุ่นเองเมื่อรุ่นหลักใช้ไม่ได้ + log บอกสาเหตุ** (ผู้ใช้เจอแชทค้าง / เช็คราคาได้ 503 เป็นช่วง ๆ — Gemini 3.8 Flash คนใช้เยอะ, โควตาฟรีต่อนาทีของแต่ละรุ่น): `ai/gemini_fallback.go` (`fallbackGemini`, `retryableGemini`, `geminiModelsOf`, รอรุ่นละไม่เกิน 60 วินาที), config `GEMINI_FALLBACK_MODELS` (`splitList`), `writeAICode` เขียน `WARN AI ใช้ไม่ได้ code=... detail=...` ทุกครั้ง (เดิม log บอกแค่ 503), ใส่ `GEMINI_MODEL=gemini-3.6-flash` + บรรทัด `TAVILY_API_KEY=` ใน `.env` ให้ผู้ใช้ (ไม่แตะ key อื่น) — test ใหม่ 11 กรณี (503 / 429 / ค้าง → รุ่นสำรอง, ใช้รุ่นสำรองต่อทั้งงาน, 400 ไม่ลองต่อ, งานหมดเวลาไม่ลองต่อ, ทุกรุ่นยุ่ง, ผ่าน handler + รุ่นสำรองค่าเริ่มต้น, config) — gofmt / vet / test ผ่านทุก package (ai 84.7%, config 100%) — **ลองจริงกับ API + DB ทดสอบ**: แชท 200 ใน 4.4 วินาที, เช็คราคา (Tavily + Gemini ฟรี) 201 ใน 24 วินาที ได้ลิงก์ร้านจริง, log เห็นสลับ 3.6 Flash (503) → 3.5 Flash (429) → 3.5 Flash-Lite สำเร็จ / ก่อนหน้านี้ลองเช็คราคาสินค้าจริงของร้าน (พวงกุญแจ) ผ่าน API ของผู้ใช้สำเร็จ 28 วินาที | ต้อง restart `make run` / ผู้ใช้ถามว่าทำไมราคาแนะนำแต่ละรอบไม่เท่ากัน → อธิบายแล้ว รอเลือกว่าจะให้ระบบคิดราคาแนะนำเองด้วยสูตรไหม |
 | 2026-11-01 | **Gemini ฟรีเช็คราคาตลาดได้ด้วยตัวค้นเว็บฟรี (Tavily)** (ผู้ใช้เลือกหลังรู้ว่า Gemini ฟรีค้น Google ไม่ได้): `ai/tavily.go` (`WebSearcher` interface + `TavilyError`, เรียก REST ด้วย Go standard library ไม่เพิ่ม package), `geminiSearchResearch` 3 ขั้น (Gemini คิดคำค้น → Tavily ค้น → Gemini จัดผล, แยก `geminiWriteReport` ใช้ร่วมกับทาง Google), `geminiQueryPrompt`, config `TAVILY_API_KEY` → `status.web_search` ของ Gemini = true, error ใหม่ `search_key_invalid` / `search_quota_exceeded` (503), ข้อความในแชทเมื่อค้นไม่ได้บอกวิธีเปิด, `openapi.yaml` — test ใหม่ 12 กรณี (ขั้นตอนครบ + กรองคำค้น, ค้นไม่เจอ, คิดคำค้นไม่ได้, เครดิตหมดหยุดทันที, ตัวเรียก Tavily: path / header / body / error 432, ผ่าน handler, status, error 4 แบบ) — gofmt / vet / test ผ่านทุก package (ai 83.8%) | **ยังไม่ได้ลองกับ Tavily จริง** (รอผู้ใช้ใส่ `TAVILY_API_KEY` ใน `.env`) / ร้านที่ใส่ key Claude ไว้ใช้ Claude ก่อนเสมอ → จะใช้ทางฟรีต้องลบ key Claude ที่หน้าตั้งค่า / **กระทบ Flutter**: error code ใหม่ + ข้อความตามสถานะค้นเว็บ ทำแล้ว / ต้อง restart `make run` |

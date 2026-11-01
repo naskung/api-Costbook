@@ -18,6 +18,7 @@ import (
 	"github.com/naskung/api-Costbook/internal/features/product"
 	"github.com/naskung/api-Costbook/internal/features/stock"
 	"github.com/naskung/api-Costbook/internal/features/transaction"
+	"github.com/naskung/api-Costbook/internal/features/user"
 	"github.com/naskung/api-Costbook/internal/helpers"
 	"github.com/naskung/api-Costbook/internal/middleware"
 )
@@ -35,10 +36,15 @@ func New(cfg config.Config, db *pgxpool.Pool) *gin.Engine {
 	api := r.Group("/api/v1")
 	api.GET("/health", health)
 
-	authRequired := middleware.Auth(cfg.JWTSecret)
+	// ทุก route ที่ต้อง login: ตรวจ token + เช็คผู้ใช้ใน DB (บัญชีถูกปิด → 401 ทันที) + เก็บ role ไว้ให้ RequireRole
+	authRepo := auth.NewPostgresRepository(db)
+	authRequired := middleware.Authenticated(cfg.JWTSecret, authRepo.Status)
 
-	authHandler := auth.NewHandler(auth.NewPostgresRepository(db), cfg.JWTSecret)
+	authHandler := auth.NewHandler(authRepo, cfg.JWTSecret)
 	authHandler.RegisterRoutes(api, authRequired)
+
+	userHandler := user.NewHandler(user.NewPostgresRepository(db))
+	userHandler.RegisterRoutes(api, authRequired)
 
 	companyRepo := company.NewPostgresRepository(db)
 	companyHandler := company.NewHandler(companyRepo)

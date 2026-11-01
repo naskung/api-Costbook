@@ -35,3 +35,13 @@ func IsUUID(value string) bool {
 	}
 	return true
 }
+
+// IsEmail อีเมลรูปแบบ ชื่อ@โดเมน.นามสกุล (ไม่มีช่องว่าง มี @ ตัวเดียว)
+func IsEmail(value string) bool {
+	name, domain, found := strings.Cut(value, "@")
+	if !found || name == "" || strings.ContainsAny(value, " \t\n") || strings.Contains(domain, "@") {
+		return false
+	}
+	dot := strings.LastIndex(domain, ".")
+	return dot > 0 && dot < len(domain)-1
+}

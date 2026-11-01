@@ -78,11 +78,12 @@ api-Costbook/
 │   ├── config/               อ่านค่าจาก environment variable
 │   ├── database/             เชื่อมต่อ PostgreSQL (Phase 2)
 │   ├── router/               สร้าง Gin router + รวม route ทั้งหมดไว้ที่เดียว
-│   ├── middleware/           ทำงานก่อนทุก request: cors, auth (logger มากับ gin.Default() แล้ว)
+│   ├── middleware/           ทำงานก่อนทุก request: cors, auth (Authenticated = ต้อง login, RequireRole = เฉพาะบาง role) (logger มากับ gin.Default() แล้ว)
 │   ├── helpers/              ช่วยงาน HTTP: WriteError, ServerError, MonthStart (?month=), UUIDParam (:id), ReadImage (อ่านรูปที่อัปโหลด) (ตอบสำเร็จใช้ c.JSON ของ Gin)
-│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), cost (CostPerUnit), date (IsDate), check (IsUUID, IsTaxID), token (JWT), image (ImageContentType), secret (Encrypt / Decrypt)
+│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), cost (CostPerUnit), date (IsDate), check (IsUUID, IsTaxID, IsEmail), token (JWT), image (ImageContentType), secret (Encrypt / Decrypt)
 │   └── features/
-│       ├── auth/             login + ข้อมูลผู้ใช้ที่ login อยู่ (ตาราง users)
+│       ├── auth/             login + ข้อมูลผู้ใช้ที่ login อยู่ (ตาราง users) + ชื่อ role
+│       ├── user/             โปรไฟล์ของตัวเอง (ชื่อ / รหัสผ่าน / รูป) + จัดการผู้ใช้ของร้าน (เฉพาะเจ้าของร้าน)
 │       ├── company/          ข้อมูลร้าน + โลโก้ (ตาราง company มีแถวเดียว)
 │       ├── product/
 │       │   ├── model.go           struct + Validate()
@@ -239,10 +240,20 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `POST /api/v1/products/{id}/market` | ให้ AI ค้นราคาตลาดใหม่แล้วบันทึกผล (มีค่าใช้จ่าย 1–3 นาที) |
 | auth ✅ | `POST /api/v1/auth/login` | login ได้ token |
 | | `GET /api/v1/auth/me` | ข้อมูลผู้ใช้ที่ login อยู่ (ต้องส่ง token) |
+| user ✅ | `PUT /api/v1/profile` | แก้ชื่อ-นามสกุลของตัวเอง |
+| | `PUT /api/v1/profile/password` | เปลี่ยนรหัสผ่านของตัวเอง (ต้องใส่รหัสเดิมถูก) → 204 |
+| | `PUT /api/v1/profile/avatar` | อัปโหลดรูปโปรไฟล์ (multipart ช่อง `avatar`, PNG / JPG / WebP ไม่เกิน 1 MB) |
+| | `DELETE /api/v1/profile/avatar` | ลบรูปโปรไฟล์ → ได้ผู้ใช้ที่ `avatar_version = 0` |
+| | `GET /api/v1/users/{id}/avatar?v=<avatar_version>` | รูปโปรไฟล์ (ตอบเป็นรูป ทุกคนที่ login ดูได้) |
+| | `GET /api/v1/users` | รายชื่อผู้ใช้ทั้งร้าน — **เฉพาะเจ้าของร้าน** |
+| | `POST /api/v1/users` | เพิ่มผู้ใช้ (อีเมล + รหัสผ่านแรก + role) — **เฉพาะเจ้าของร้าน** |
+| | `PUT /api/v1/users/{id}` | แก้ชื่อ / role / เปิด-ปิดบัญชี — **เฉพาะเจ้าของร้าน** |
+| | `PUT /api/v1/users/{id}/password` | ตั้งรหัสผ่านใหม่ให้ (ไม่ต้องรู้รหัสเดิม) → 204 — **เฉพาะเจ้าของร้าน** |
 
 ในตารางเขียน path แบบ `{id}` แต่ในโค้ด Gin เขียนเป็น `:id` เช่น `api.GET("/products/:id", ...)` แล้วอ่านค่าด้วย `helpers.UUIDParam(c, "id", "product_not_found")` (id ไม่ใช่ UUID → ตอบ 404 ให้เลย ไม่ส่งไป DB)
 
 ทุก endpoint ยกเว้น health / auth/login / GET company / GET company/logo **ต้อง login** (`authRequired`)
+endpoint ที่เขียนว่า **เฉพาะเจ้าของร้าน** → role อื่นได้ 403 `forbidden` (ตอนนี้มีแค่จัดการผู้ใช้ ที่เหลือทุก role ใช้ได้เหมือนกัน)
 `?month=2026-10` ไม่ส่ง = เดือนนี้ อ่านด้วย `helpers.MonthStart(c)` ได้วันแรกของเดือน `"2026-10-01"` ไปใช้ใน SQL: `date >= $1::date AND date < $1::date + interval '1 month'`
 รายละเอียด field ของทุก endpoint ดูใน Swagger (`docs/openapi.yaml`)
 
@@ -257,19 +268,33 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 // 200
 {
   "token": "eyJhbGciOi...",
-  "user": { "id": "a00d265d-...", "email": "admin@costbook.com", "first_name": "Admin", "last_name": "CostBook" }
+  "user": { "id": "a00d265d-...", "email": "admin@costbook.com", "first_name": "Admin", "last_name": "CostBook", "role": "owner", "avatar_version": 0 }
 }
 ```
 
 - อีเมลไม่สนตัวพิมพ์เล็ก / ใหญ่ และตัดช่องว่างหน้า-หลังให้ (เก็บใน DB เป็นตัวเล็กเสมอ)
-- error: 400 `invalid_json` / `email_required` / `password_required`, 401 `invalid_credentials` (อีเมลไม่มี หรือรหัสผิด ตอบเหมือนกัน)
+- error: 400 `invalid_json` / `email_required` / `password_required`, 401 `invalid_credentials` (อีเมลไม่มี หรือรหัสผิด ตอบเหมือนกัน), 403 `user_disabled` (รหัสถูก แต่เจ้าของร้านปิดบัญชีไว้ — รหัสผิดยังได้ 401 เสมอ ไม่บอกว่าบัญชีถูกปิด)
 
 `GET /api/v1/auth/me` — header `Authorization: Bearer <token>`
 
-- 200 `{ "id", "email", "first_name", "last_name" }`
-- 401 `unauthorized` (ไม่มี token / token ผิด / หมดอายุ / ผู้ใช้ถูกลบ) → Flutter พาไปหน้า login
+- 200 `{ "id", "email", "first_name", "last_name", "role", "avatar_version" }`
+- 401 `unauthorized` (ไม่มี token / token ผิด / หมดอายุ / ผู้ใช้ถูกลบ / ถูกปิดบัญชี) → Flutter พาไปหน้า login
 
-route ใหม่ที่ต้อง login ก่อน → ใส่ `authRequired` (`middleware.Auth`) ใน `router.go` แล้ว handler อ่าน id ผู้ใช้ด้วย `c.GetString(middleware.UserIDKey)`
+route ใหม่ที่ต้อง login ก่อน → ใส่ `authRequired` ใน `router.go` แล้ว handler อ่าน id ผู้ใช้ด้วย `c.GetString(middleware.UserIDKey)` และ role ด้วย `c.GetString(middleware.RoleKey)`
+- `authRequired` = `middleware.Authenticated(jwtSecret, authRepo.Status)`: ตรวจ token แล้ว **ถามสถานะผู้ใช้จาก DB ทุก request** → ผู้ใช้ถูกลบ / ถูกปิดบัญชี ใช้ token เดิมต่อไม่ได้ทันที (ไม่ต้องรอ token หมดอายุ 7 วัน) + ใส่ role ไว้ใน context
+- จำกัดเฉพาะบาง role → ต่อ `middleware.RequireRole(auth.RoleOwner, ...)` หลัง `authRequired` เช่น `api.GET("/users", authRequired, middleware.RequireRole(auth.RoleOwner), h.List)` → role อื่นได้ 403 `forbidden`
+- `middleware.Auth` (ตรวจแค่ token ไม่ถาม DB) ยังอยู่ ใช้ใน test ของ feature อื่น
+
+### รายละเอียด ผู้ใช้ + role (ทำแล้ว, `000014_user_roles`)
+
+- role มี 3 แบบ (ค่าคงที่ใน `auth/model.go`): `owner` = เจ้าของร้าน, `manager` = ผู้จัดการ, `staff` = พนักงาน — ผู้ใช้เดิมก่อนมี role เป็น `owner` ทั้งหมด
+- **ตอนนี้จำกัดสิทธิ์แค่เรื่องเดียว:** จัดการผู้ใช้ (`/users`) เฉพาะ `owner` / เมนูอื่นทุก role ใช้ได้เหมือนกัน — ทำโครงไว้แล้ว (`RequireRole`) รอผู้ใช้กำหนดว่า role ไหนเห็นเมนูไหน / ทำอะไรได้
+- `active = false` = ปิดบัญชี: login ไม่ได้ (403 `user_disabled`) และ token เดิมใช้ไม่ได้ทันที (401) / ข้อมูลที่เคยบันทึกยังอยู่ (ไม่มีลบผู้ใช้ ใช้ปิดบัญชีแทน)
+- **ร้านต้องมีเจ้าของที่ใช้งานได้อย่างน้อย 1 คน:** เปลี่ยน role / ปิดบัญชีเจ้าของคนสุดท้าย → 409 `user_last_owner` (ล็อกแถวเจ้าของทุกคน `FOR UPDATE` ก่อนนับ กันเจ้าของ 2 คนปลดกันพร้อมกันจนไม่เหลือใคร — `user/repository.go` → `Update`)
+- รหัสผ่านอย่างน้อย 6 ตัวอักษร (นับเป็นตัวอักษร ภาษาไทย 1 ตัว = 1) เก็บแบบ bcrypt / ไม่มี `password_hash` ออกไปใน JSON เด็ดขาด
+- อีเมลเก็บเป็นตัวเล็ก ตัดช่องว่าง / ซ้ำ → 409 `user_email_taken` / เจ้าของร้านแก้อีเมลไม่ได้ (ใช้ login)
+- รูปโปรไฟล์เก็บใน DB แบบเดียวกับรูปสินค้า: `avatar_version` = เวลาที่เปลี่ยนรูป (มิลลิวินาที) ใส่ใน URL `?v=` → browser โหลดรูปใหม่ / 0 = ไม่มีรูป
+- error อื่น: 400 `user_email_invalid` / `user_name_required` / `user_name_too_long` / `user_role_invalid` / `password_too_short` / `password_current_required` / `password_current_invalid` / `avatar_required` / `avatar_too_large` / `avatar_type_invalid`, 404 `user_not_found` / `avatar_not_found`
 
 ### รายละเอียด product / cost / stock (ทำแล้ว)
 
@@ -433,7 +458,7 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | `market_checks` | ผลเช็คราคาตลาดด้วย AI (`000008_ai_market`, ลบสินค้า → ลบด้วย) | id, product_id, our_cost_price, our_sell_price, retail_low / high / typical, wholesale_low / high / note, market_cost, suggested_price, confidence (low / medium / high), summary, advice, cost_items (`JSONB`), sources (`JSONB`), created_at |
 | `stock_movements` | ประวัติรับเข้า / เบิกออก (`000005_create_stock_movements`) | id, product_id, type (in / out), quantity, note, unit_cost, supplier, invoice_id, is_material (ตัด / คืนวัสดุอัตโนมัติ `000012`), created_at |
 | `transactions` | รายรับ-รายจ่าย (`000006_create_transactions`) | id, type (income / expense), category, amount (> 0), date, note, invoice_id (ห้ามซ้ำ) |
-| `users` | ผู้ใช้ที่ login ได้ (migration `000001_create_users`) | id, email (ห้ามซ้ำ), password_hash (bcrypt), first_name, last_name |
+| `users` | ผู้ใช้ที่ login ได้ (migration `000001_create_users`, role / ปิดบัญชี / รูปโปรไฟล์ `000014_user_roles`) | id, email (ห้ามซ้ำ), password_hash (bcrypt), first_name, last_name, role (`owner` / `manager` / `staff`), active, avatar (BYTEA), avatar_content_type, avatar_version |
 
 - ทุกตารางมี `created_at` และ `updated_at`
 - `line_no` = ลำดับบรรทัดตามที่ผู้ใช้กรอก — บันทึกหลายบรรทัดใน transaction เดียว `created_at` เท่ากันหมด เรียงด้วย `created_at` ไม่ได้
@@ -651,6 +676,7 @@ productHandler.RegisterRoutes(api)
 | ข้อมูลในใบ | เก็บชื่อ ที่อยู่ เลขผู้เสียภาษี ของผู้ขาย / ผู้ซื้อ และชื่อสินค้า **ณ วันที่ออก** ไว้ในใบเลย แก้ข้อมูลบริษัทหรือสินค้าภายหลัง ใบเก่าต้องไม่เปลี่ยน — **ยกเว้นโลโก้** ไม่เก็บซ้ำในใบ (กฎหมายไม่บังคับ + DB จะบวม) พิมพ์ใบเก่าซ้ำจะได้โลโก้ปัจจุบัน |
 | รายรับจากใบกำกับ | แก้ / ลบตรง ๆ ไม่ได้ ต้องยกเลิกใบกำกับ |
 | ลบสินค้า | ถ้าเคยอยู่ในใบกำกับแล้ว ลบไม่ได้ → 409 `product_in_use` |
+| เจ้าของร้าน | ต้องมีเจ้าของที่ใช้งานได้อย่างน้อย 1 คนเสมอ → ปลด / ปิดบัญชีเจ้าของคนสุดท้าย 409 `user_last_owner` / ไม่มีลบผู้ใช้ ใช้ปิดบัญชีแทน (ข้อมูลเก่าไม่หาย) |
 | รายได้ / กำไร | **รายได้** = ยอดขายก่อน VAT หลังหักส่วนลด (เอกสารขายที่ไม่ยกเลิก) + รายรับที่บันทึกเอง (ไม่มี `invoice_id`) / **กำไรขั้นต้น** = ยอดขาย − ต้นทุนสินค้าที่ขาย (`invoice_items.cost_price` ณ วันที่ขาย) / **กำไรสุทธิ** = รายได้ − ต้นทุนสินค้าที่ขาย − รายจ่าย **ไม่รวมหมวดซื้อวัตถุดิบ** (`material` คิดอยู่ในต้นทุนสินค้าแล้ว ไม่หักซ้ำ — ผู้ใช้เลือก 2026-11-01) — คิดที่ `transaction.NewSummary` + SQL `transaction.MonthAmountsSQL` ตัวเดียว หน้ารายรับ-รายจ่าย / ภาพรวม / กราฟ 6 เดือนใช้ร่วมกัน / `income` / `expense` = เงินเข้า-ออกตามที่บันทึก (รายรับจากเอกสารขายรวม VAT) **ไม่ใช่กำไร** |
 
 ---

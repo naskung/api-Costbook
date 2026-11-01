@@ -65,6 +65,11 @@ func (h *Handler) Login(c *gin.Context) {
 		helpers.WriteError(c, http.StatusUnauthorized, "invalid_credentials")
 		return
 	}
+	// รหัสถูกแต่บัญชีถูกเจ้าของร้านปิดไว้ → บอกตรง ๆ (คนที่รู้รหัสคือเจ้าของบัญชีอยู่แล้ว)
+	if !user.Active {
+		helpers.WriteError(c, http.StatusForbidden, "user_disabled")
+		return
+	}
 
 	token, err := utils.CreateToken(user.ID, h.jwtSecret, tokenDuration)
 	if err != nil {
@@ -79,8 +84,8 @@ func (h *Handler) Me(c *gin.Context) {
 	userID := c.GetString(middleware.UserIDKey)
 
 	user, err := h.repo.FindByID(c.Request.Context(), userID)
-	if errors.Is(err, ErrNotFound) {
-		// token ถูกต้อง แต่ผู้ใช้ถูกลบไปแล้ว
+	if errors.Is(err, ErrNotFound) || (err == nil && !user.Active) {
+		// token ถูกต้อง แต่ผู้ใช้ถูกลบ / ถูกปิดบัญชีไปแล้ว
 		helpers.WriteError(c, http.StatusUnauthorized, "unauthorized")
 		return
 	}

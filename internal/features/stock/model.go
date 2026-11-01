@@ -34,6 +34,12 @@ type Movement struct {
 	Supplier    string    `json:"supplier"`
 	IsMaterial  bool      `json:"is_material"`
 	CreatedAt   time.Time `json:"created_at"`
+	// กำไรของแถวที่ขาย (ขายตามเอกสารที่ยังไม่ยกเลิก ไม่ใช่แถววัสดุ) — แถวอื่น has_profit = false ตัวเลขเป็น 0
+	// คิดแบบเดียวกับกำไรขั้นต้นในหน้าภาพรวม: ยอดขายก่อน VAT หลังเฉลี่ยส่วนลดของบิล − ต้นทุน ณ วันที่ขาย
+	HasProfit  bool    `json:"has_profit"`
+	SaleAmount float64 `json:"sale_amount"`
+	CostAmount float64 `json:"cost_amount"`
+	Profit     float64 `json:"profit"`
 }
 
 // MovementRequest ข้อมูลที่รับมาตอนรับเข้า / เบิกออก

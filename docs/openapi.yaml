@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.11.0
+  version: 0.12.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -2715,6 +2715,21 @@ components:
         created_at:
           type: string
           format: date-time
+        has_profit:
+          type: boolean
+          description: true = แถวที่ขายตามเอกสารที่ยังไม่ยกเลิก (มีกำไรให้ดู) / แถวอื่นตัวเลขกำไรเป็น 0
+        sale_amount:
+          type: number
+          description: ยอดขายของแถวนี้ ก่อน VAT หลังเฉลี่ยส่วนลดของบิล
+          example: 250.52
+        cost_amount:
+          type: number
+          description: ต้นทุน ณ วันที่ขาย × จำนวน
+          example: 227.74
+        profit:
+          type: number
+          description: กำไร = sale_amount − cost_amount (ติดลบ = ขายขาดทุน) — คิดแบบเดียวกับกำไรขั้นต้นในหน้าภาพรวม
+          example: 22.78
 
     MovementRequest:
       type: object

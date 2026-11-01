@@ -58,13 +58,24 @@ func (r *PostgresRepository) List(ctx context.Context, onlyLow bool) ([]StockIte
 	return items, rows.Err()
 }
 
+// saleShare สัดส่วนยอดก่อน VAT หลังหักส่วนลดของบิล ต่อยอดรวมสินค้า → ยอดบรรทัด × saleShare = ยอดขายสุทธิของบรรทัด
+// (ต้องตรงกับ netAmount ของหน้าภาพรวม — dashboard/repository.go)
+const saleShare = `CASE WHEN i.items_total > 0 THEN i.subtotal / i.items_total ELSE 0 END`
+
 // movementSelect อ่านประวัติพร้อมชื่อสินค้าและเลขที่ใบกำกับ เรียงตรงกับ scanMovement
+// s = ยอดของสินค้านี้ในบิล (จำนวน / ยอดขายสุทธิ / ต้นทุน ณ วันที่ขาย) เฉพาะแถวที่ขายตามบิลที่ยังไม่ยกเลิก ไว้คิดกำไร
 const movementSelect = `
 	SELECT m.id, m.product_id, p.name, p.unit, m.type, m.quantity, m.note, COALESCE(i.invoice_no, ''),
-		m.unit_cost, m.supplier, m.is_material, m.created_at
+		m.unit_cost, m.supplier, m.is_material, m.created_at,
+		COALESCE(s.quantity, 0), COALESCE(s.amount * ` + saleShare + `, 0), COALESCE(s.cost, 0)
 	FROM stock_movements m
 	JOIN products p ON p.id = m.product_id
-	LEFT JOIN invoices i ON i.id = m.invoice_id`
+	LEFT JOIN invoices i ON i.id = m.invoice_id
+	LEFT JOIN LATERAL (
+		SELECT SUM(ii.quantity) AS quantity, SUM(ii.amount) AS amount, SUM(ii.quantity * ii.cost_price) AS cost
+		FROM invoice_items ii
+		WHERE ii.invoice_id = m.invoice_id AND ii.product_id = m.product_id
+	) s ON m.type = 'out' AND NOT m.is_material AND i.status = 'issued'`
 
 // Movements ประวัติล่าสุด 200 รายการ (productID ว่าง = ทุกสินค้า)
 func (r *PostgresRepository) Movements(ctx context.Context, productID string) ([]Movement, error) {
@@ -169,7 +180,9 @@ func lockProduct(ctx context.Context, tx pgx.Tx, productID string) (int, float64
 // scanMovement อ่านผลจาก movementSelect ใส่ Movement
 func scanMovement(row pgx.Row) (Movement, error) {
 	var m Movement
+	var lineQuantity int
+	var lineNet, lineCost float64
 	err := row.Scan(&m.ID, &m.ProductID, &m.ProductName, &m.Unit, &m.Type, &m.Quantity, &m.Note, &m.InvoiceNo,
-		&m.UnitCost, &m.Supplier, &m.IsMaterial, &m.CreatedAt)
-	return m, err
+		&m.UnitCost, &m.Supplier, &m.IsMaterial, &m.CreatedAt, &lineQuantity, &lineNet, &lineCost)
+	return withSaleProfit(m, lineQuantity, lineNet, lineCost), err
 }

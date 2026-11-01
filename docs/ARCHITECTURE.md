@@ -21,7 +21,7 @@ Flutter Web ──HTTP request──▶ Go API ──SQL──▶ PostgreSQL
 | HTTP server | โปรแกรมที่เปิดรอรับ request ที่ port หนึ่ง | `r.Run(":8080")` ของ Gin (ข้างในใช้ `net/http`) | 1 |
 | Router | จับคู่ "method + URL" กับฟังก์ชันที่จะทำงาน | `r.GET(...)`, `r.POST(...)` ของ Gin | 1 |
 | JSON | รูปแบบข้อมูลที่ส่งไปกลับกับ Flutter | `c.ShouldBindJSON` (อ่าน) / `c.JSON` (ตอบ) ของ Gin | 1 |
-| CORS | อนุญาตให้เว็บที่อยู่คนละ port / โดเมนเรียก API ได้ ถ้าไม่มี browser จะบล็อก | `middleware/cors.go` | 1 |
+| CORS | อนุญาตให้เว็บที่อยู่คนละ port / โดเมนเรียก API ได้ ถ้าไม่มี browser จะบล็อก / `Access-Control-Max-Age: 600` → browser จำคำตอบ OPTIONS 10 นาที ไม่ถามซ้ำก่อนทุก request | `middleware/cors.go` | 1 |
 | Error format | ตอบ error แบบเดียวกันทุกที่ Flutter อ่านง่าย | `{"error": "code"}` | 1 |
 | Config | ค่าที่ต่างกันแต่ละเครื่อง (port, รหัส DB) อ่านจาก environment variable ไม่เขียนลงโค้ด | `config/config.go` | 1 |
 | Unit test | test อัตโนมัติ เช็คว่าโค้ดยังถูกอยู่ | `testing` + `httptest` (มากับ Go) + `gin.TestMode` | 1 และทุก Phase |

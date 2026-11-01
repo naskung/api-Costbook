@@ -23,6 +23,9 @@ func TestCORS_OptionsRequest(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("status = %d, ต้องได้ %d", rec.Code, http.StatusNoContent)
 	}
+	if got := rec.Header().Get("Access-Control-Max-Age"); got != "600" {
+		t.Errorf("browser ต้องจำคำตอบ OPTIONS ไว้ 10 นาที (ไม่ถามซ้ำทุก request) ได้ %q", got)
+	}
 }
 
 func TestCORS_NormalRequest(t *testing.T) {

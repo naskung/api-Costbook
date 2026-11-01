@@ -40,6 +40,9 @@ type MarketReport struct {
 	Advice         string           `json:"advice"`
 	Confidence     string           `json:"confidence"`
 	Sources        []MarketSource   `json:"sources"`
+	// SearchSuggestions แถบคำค้นแนะนำของ Google (HTML) — มีเมื่อเช็คด้วย Gemini (ค้นผ่าน Google)
+	// กติกาของ Google: ต้องแสดงคู่กับผลเสมอ ห้ามแก้ไข / Claude ไม่มี = ""
+	SearchSuggestions string `json:"search_suggestions"`
 }
 
 // MarketCostItem ต้นทุน 1 รายการที่คนทำขายน่าจะต้องจ่าย (ต่อหน่วย)

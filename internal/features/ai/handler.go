@@ -29,10 +29,15 @@ type Handler struct {
 	now       func() time.Time
 	newClaude func(apiKey string) Claude
 	newGemini func(apiKey, model string) Gemini
+	// newSearcher ตัวค้นเว็บของ Gemini ฟรี (Tavily) — test เปลี่ยนเป็นตัวปลอมได้
+	newSearcher func(apiKey string) WebSearcher
 }
 
 func NewHandler(repo Repository, shop ShopReader, cfg Config) *Handler {
-	return &Handler{repo: repo, shop: shop, cfg: cfg, now: time.Now, newClaude: NewClaude, newGemini: NewGemini}
+	return &Handler{
+		repo: repo, shop: shop, cfg: cfg, now: time.Now,
+		newClaude: NewClaude, newGemini: NewGemini, newSearcher: NewTavily,
+	}
 }
 
 // RegisterRoutes ต่อ route ของ AI เข้ากับกลุ่ม /api/v1 (ต้อง login ทุกเส้น)
@@ -58,7 +63,17 @@ func (h *Handler) current(ctx context.Context) (Assistant, Status, error) {
 	case status.Provider == providerClaude:
 		return claudeAssistant{claude: h.newClaude(h.cfg.ClaudeKey)}, status, nil
 	case status.Provider == providerGemini:
-		return geminiAssistant{gemini: h.newGemini(h.cfg.GeminiKey, status.Model)}, status, nil
+		models := geminiModelsOf(status.Model, geminiFallbacksOf(h.cfg))
+		newGemini := func(model string) Gemini { return h.newGemini(h.cfg.GeminiKey, model) }
+		assistant := geminiAssistant{
+			gemini:    newFallbackGemini(models, newGemini),
+			search:    h.newGemini(h.cfg.GeminiKey, geminiSearchModelOf(h.cfg)),
+			useGoogle: h.cfg.GeminiWebSearch,
+		}
+		if h.cfg.TavilyKey != "" {
+			assistant.searcher = h.newSearcher(h.cfg.TavilyKey)
+		}
+		return assistant, status, nil
 	}
 	return nil, status, nil
 }

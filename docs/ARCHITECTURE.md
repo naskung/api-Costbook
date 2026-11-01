@@ -328,11 +328,24 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | | Claude (`claude-opus-5-5`, SDK ทางการ `ai/claude.go`) | Gemini ฟรี (`gemini-3.8-flash`, REST `ai/gemini.go`) |
 |---|---|---|
 | แชท + อ่านข้อมูลร้าน + เสนองาน | ได้ | ได้ (เครื่องมือชุดเดียวกัน) |
-| ค้นเว็บ → เช็คราคาตลาด | ได้ | **ไม่ได้** (รุ่นฟรีไม่มีค้นเว็บ) → 409 `ai_search_unavailable` / ในแชท AI จะบอกให้ใส่ key ของ Claude |
+| ค้นเว็บ → เช็คราคาตลาด | ได้ | **ได้เมื่อมี `TAVILY_API_KEY`** (ค้นเว็บฟรี 1,000 ครั้ง/เดือน ไม่ต้องผูกบัตร) / หรือ `GEMINI_WEB_SEARCH=on` เมื่อเปิด Gemini แบบเสียเงิน / ไม่มีทั้งคู่ → 409 `ai_search_unavailable` (ในแชท AI จะบอกวิธีเปิด) |
 | ค่าใช้จ่าย | จ่ายตามการใช้งาน | ฟรี มีโควตาต่อวัน (เกิน → 503 `ai_quota_exceeded`) — Google อาจเอาข้อความไปพัฒนาบริการ |
 
 - `Assistant` interface (`Chat`, `Research`) → handler ไม่ต้องรู้ว่าเป็น AI ตัวไหน
 - เครื่องมือเขียนครั้งเดียว (`toolSpec` ใน `ai/tools.go`) แล้วแปลงเป็นรูปแบบของแต่ละตัว: `claudeTools` / `geminiTools`
+- **Gemini สลับรุ่นเอง** (`ai/gemini_fallback.go`): ทุกคำขอไป Gemini ผ่าน `fallbackGemini` — รุ่นหลัก (`GEMINI_MODEL`) ตอบ 5xx (ยุ่ง) / 429 (โควตาของรุ่นนั้นเต็ม — ฟรีนับแยกรายรุ่น) / เงียบเกิน 60 วินาที (`geminiAttemptTimeout`) → ลองรุ่นสำรองถัดไป (`GEMINI_FALLBACK_MODELS` ไม่ใส่ = `gemini-3.5-flash`, `gemini-3.5-flash-lite`), 4xx อื่นไม่ลองต่อ, สลับแล้วใช้รุ่นนั้นต่อทั้งงาน (คำตอบของ Gemini ผูกกับรุ่น) / ลองจริงแล้ว: 3.6 Flash 503 → 3.5 Flash 429 → 3.5 Flash-Lite ตอบได้
+- **log สาเหตุ**: ทุกครั้งที่ AI ใช้ไม่ได้ เขียน `WARN AI ใช้ไม่ได้ code=... detail=...` (`writeAICode`) — ดูในหน้าต่าง `make run` ได้ว่า 503 เพราะอะไร
+- **Gemini ฟรี + Tavily** (`ai/tavily.go`, `geminiSearchResearch` ใน `ai/gemini_market.go`) — วิธีเช็คราคาตลาดแบบฟรี (ผู้ใช้เลือก 2026-11-01):
+  1. Gemini คิดคำค้น 2–3 คำ **+ เลือกแหล่ง** ของแต่ละคำ (JSON `geminiQuerySchema`, `cleanQueries` ตัดซ้ำ / ว่าง): `marketplace` = ร้านออนไลน์ (ของทั่วไป งานทำมือ ของสำเร็จรูป) / `central_market` = ตลาดกลาง / ราคาทางการ (ของสด: เนื้อสัตว์ ผัก ผลไม้ อาหารทะเล ไข่ ข้าว) — ผู้ใช้เลือก 2026-11-01 "ให้เช็คจาก Shopee Lazada เป็นหลัก ของสดเช็คจากตลาดกลาง"
+  2. `searchPlan` (`ai/search_plan.go`) แปลงเป็นการค้นจริง ไม่เกิน `maxSearches` = 6 ครั้ง: ร้านออนไลน์ → ค้น `shopee.co.th` 1 + `lazada.co.th` 1 แยกกัน (ลองค้นรวมแล้วผลเป็น Shopee หมด) / ตลาดกลาง → 1 ครั้ง `include_domains` = ตลาดไท ตลาดสี่มุมเมือง dit / moc / oae แบบ `prefer` (เว็บราคาเกษตรอื่นก็ได้) + `time_range: month` (ข่าวราคาเก่าใช้ไม่ได้) — Tavily `POST /search` (`search_depth: basic` = 1 เครดิต, `max_results: 8`, `country: thailand`, key ทาง header) ผลแต่ละหน้ามีป้าย `[Shopee]` / `[Lazada]` / `[ตลาดกลาง / ราคาทางการ]` (`SearchResult.Source`)
+  3. Gemini จัดเป็นผล (`geminiWriteReport`) — `marketRules` บอกให้ใช้ราคาจาก Shopee / Lazada เป็นหลัก ของสดใช้ราคาตลาดกลางล่าสุด แหล่งที่มาเฉพาะลิงก์ที่ค้นเจอจริง — เช็ค 1 สินค้า ≈ 5–6 เครดิต → ฟรีประมาณ 170 สินค้า / เดือน
+  - ลองจริงแล้ว: พวงกุญแจ 3D → Shopee 2 + Lazada 1 ร้าน 45–153.90 บาท / หมูสามชั้น → พาณิชย์จังหวัด + เว็บราคาหมู + Lazada 150–200 บาท/กก. (หน้า Shopee ที่ Tavily อ่านได้ ราวครึ่งหนึ่งมีราคาให้เห็น)
+  - error ของ Tavily (`TavilyError`): 401 / 403 → 503 `search_key_invalid`, 429 / 432 / 433 (เครดิตเดือนนี้หมด) → 503 `search_quota_exceeded`, อื่น ๆ → log + 502 `ai_error` / เครดิตหมดกลางทาง → หยุดค้นทันที
+  - ลำดับ: `GEMINI_WEB_SEARCH=on` → ค้นผ่าน Google ก่อน / ไม่งั้นมี `TAVILY_API_KEY` → Tavily / ไม่มีทั้งคู่ → ค้นไม่ได้
+- **Gemini ค้น Google** (`geminiResearch` ใน `ai/gemini_market.go`, ปิดอยู่เป็นค่าเริ่มต้น): ลองกับบัญชีฟรีจริงแล้ว (2026-11-01) ค้นไม่ได้ — รุ่น 2.5 (ที่หน้าราคาบอกว่าค้นฟรีวันละ 500 ครั้ง) ตอบ 404 "no longer available to new users", รุ่น 3.x ใส่ `google_search` แล้วได้ 429 ทันที (โควตาฟรี = 0) ส่วนแชทธรรมดายังใช้ได้ / แบบเสียเงิน: ค้นฟรี 5,000 ครั้ง/เดือน (Gemini 3 ขึ้นไป) + 3.8 Flash $0.75 / $3.75 ต่อล้าน token (ถึง 31 ธ.ค. 2026) → เช็ค 1 ครั้งไม่ถึง 1 บาท และ Google ไม่เอาข้อมูลไปใช้
+  - ทำ 2 ขั้น (ค้น Google พร้อมตอบเป็น JSON ครั้งเดียวไม่ได้): 1) รุ่นค้น (`GEMINI_SEARCH_MODEL` ไม่ใส่ = รุ่นเดียวกับแชท) + `tools: [{google_search: {}}]` → ข้อความราคาที่เจอ + `groundingMetadata` (ลิงก์ที่ใช้ + `searchEntryPoint.renderedContent`) 2) รุ่นแชท + `generationConfig.responseJsonSchema` = `geminiReportSchema` (ช่องเดียวกับ `reportTool` ของ Claude, `reportProperties` ใช้ร่วมกัน) → `MarketReport`
+  - แหล่งที่มาเก็บเฉพาะลิงก์ที่ Google ค้นเจอจริง (`foundSourcesOnly`, AI แต่งลิงก์ไม่ได้) / ขั้นที่ 2 ลองกับ Gemini จริงแล้วรับ schema ได้
+  - **กติกาของ Google** (Gemini API Additional Terms): ผลที่ค้นผ่าน Google ต้องแสดง Search Suggestions (`search_suggestions` ใน `market_checks`, migration `000013`) คู่กับผลเสมอ ห้ามแก้ไข / เก็บไว้ได้เพื่อให้ผู้ใช้คนเดิมดูประวัติของตัวเอง — **หน้าเว็บยังไม่ได้ทำส่วนแสดงนี้ ต้องทำก่อนเปิด `GEMINI_WEB_SEARCH`**
 - Gemini: เรียก `POST /models/{model}:generateContent` ด้วย Go standard library (ไม่เพิ่ม package), ส่งส่วนที่ AI ตอบกลับไปแบบเดิมทุกไบต์ (มี `thoughtSignature` ที่ Gemini ต้องได้คืน), คำตอบถูกบล็อก (SAFETY ฯลฯ) → 422 `ai_refused`
 
 **key ของร้าน** (`PUT` / `DELETE /ai/key`):
@@ -677,6 +690,10 @@ productHandler.RegisterRoutes(api)
 | `ANTHROPIC_API_KEY` | ไม่มี = ใช้ key ที่ร้านใส่ในหน้าตั้งค่า หรือ AI ฟรี | API key ของ Claude (สมัครที่ https://platform.claude.com) ใช้เช็คราคาตลาด + แชท — มีค่าใช้จ่ายตามการใช้งาน ห้าม commit |
 | `GEMINI_API_KEY` | ไม่มี = ไม่มี AI ฟรี | API key ของ Gemini **ฟรี** (สร้างที่ https://aistudio.google.com/apikey) = AI เริ่มต้นเมื่อร้านไม่มี key ของ Claude — แชทได้ ค้นเว็บไม่ได้ ห้าม commit |
 | `GEMINI_MODEL` | `gemini-3.8-flash` | รุ่นของ Gemini (เปลี่ยนเมื่อ Google ออกรุ่นใหม่ / รุ่นเดิมเลิกให้ใช้ฟรี) |
+| `GEMINI_WEB_SEARCH` | ว่าง (ปิด) | `on` = ให้ Gemini ค้น Google ตอนเช็คราคาตลาด — ต้องเปิด Gemini แบบเสียเงินก่อน (แบบฟรีได้ 429) และหน้าเว็บต้องแสดง Search Suggestions ก่อน |
+| `GEMINI_SEARCH_MODEL` | ว่าง (= `GEMINI_MODEL`) | รุ่นที่ใช้ค้น Google |
+| `TAVILY_API_KEY` | ว่าง | ตัวค้นเว็บฟรี (tavily.com, 1,000 ครั้ง/เดือน) → Gemini ฟรีเช็คราคาตลาดได้ |
+| `GEMINI_FALLBACK_MODELS` | ว่าง (= `gemini-3.5-flash,gemini-3.5-flash-lite`) | รุ่นสำรองเมื่อรุ่นหลักยุ่ง / โควตาเต็ม / ค้าง คั่นด้วย `,` |
 | `JWT_SECRET` | **ต้องมี** | ข้อความลับไว้เซ็น token สร้างด้วย `openssl rand -hex 32` — แต่ละเครื่อง / server ใช้คนละค่า ถ้าเปลี่ยน token เก่าใช้ไม่ได้ทั้งหมด (ทุกคนต้อง login ใหม่) และ key AI ที่ร้านใส่ไว้ถอดรหัสไม่ได้ (ต้องใส่ใหม่) |
 | `GIN_MODE` | `debug` | Gin อ่านค่านี้เอง ไม่ต้องเขียนใน config — ตอนพัฒนาไม่ต้องตั้ง (Gin จะพิมพ์ข้อความ debug ให้ดู) ขึ้น server จริงตั้งเป็น `release` |
 

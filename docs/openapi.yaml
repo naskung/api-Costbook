@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.9.0
+  version: 0.10.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -1478,7 +1478,7 @@ paths:
         - bearerAuth: []
       responses:
         "409":
-          description: "AI ที่ใช้อยู่ค้นเว็บไม่ได้ (Gemini ฟรี) ต้องใส่ key ของ Claude ก่อน (ai_search_unavailable)"
+          description: "AI ที่ใช้อยู่ค้นเว็บไม่ได้ (Gemini ที่ไม่มี TAVILY_API_KEY และไม่ได้เปิด GEMINI_WEB_SEARCH) ต้องใส่ key ของ Claude ก่อน (ai_search_unavailable)"
           content:
             application/json:
               schema:
@@ -1759,7 +1759,7 @@ components:
             $ref: "#/components/schemas/Error"
           example: { error: ai_no_result }
     AIUnavailable:
-      description: "ไม่มี AI ให้ใช้ (ai_not_configured) / API key ผิด (ai_key_invalid) / เครดิตของ key Claude หมด (ai_credit_low) / AI ไม่ว่าง ลองใหม่ทีหลัง (ai_busy) / โควตา AI ฟรีหมด (ai_quota_exceeded)"
+      description: "ไม่มี AI ให้ใช้ (ai_not_configured) / API key ผิด (ai_key_invalid) / เครดิตของ key Claude หมด (ai_credit_low) / AI ไม่ว่าง ลองใหม่ทีหลัง (ai_busy) / โควตา AI ฟรีหมด (ai_quota_exceeded) / key ของตัวค้นเว็บ Tavily ผิด (search_key_invalid) / สิทธิ์ค้นเว็บฟรีของเดือนหมด (search_quota_exceeded)"
       content:
         application/json:
           schema:
@@ -2818,7 +2818,7 @@ components:
         provider: { type: string, enum: [claude, gemini, none] }
         model: { type: string, example: claude-opus-5-5 }
         source: { type: string, enum: [settings, env, ""], description: "settings = ร้านใส่เอง, env = ไฟล์ .env" }
-        web_search: { type: boolean, description: "ค้นเว็บได้ไหม (เช็คราคาตลาดได้เฉพาะ true)" }
+        web_search: { type: boolean, description: "ค้นเว็บได้ไหม (เช็คราคาตลาดได้เฉพาะ true) — Claude ได้เสมอ / Gemini ได้เมื่อ API มี TAVILY_API_KEY (ค้นเว็บฟรี) หรือเปิด GEMINI_WEB_SEARCH=on (Gemini แบบเสียเงิน)" }
         has_own_key: { type: boolean, description: ร้านใส่ key Claude เองไว้ไหม }
         key_hint: { type: string, example: "…a1B2", description: 4 ตัวท้ายของ key ที่ร้านใส่ }
         free_available: { type: boolean, description: มี AI ฟรี (Gemini) ให้ใช้ไหม }
@@ -2850,6 +2850,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MarketSource"
+        search_suggestions:
+          type: string
+          description: "แถบคำค้นแนะนำของ Google (HTML) — มีเมื่อเช็คด้วย Gemini (ค้นผ่าน Google) / กติกาของ Google: ต้องแสดงคู่กับผลเสมอ ห้ามแก้ไข / เช็คด้วย Claude = ว่าง"
         checked_at: { type: string, format: date-time }
 
     MarketCostItem:

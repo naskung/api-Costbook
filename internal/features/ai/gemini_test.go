@@ -109,16 +109,33 @@ func TestGemini_ProposeAction(t *testing.T) {
 	}
 }
 
-func TestGemini_MarketCheckProposalNeedsClaude(t *testing.T) {
+func TestGemini_MarketCheckNotAvailable(t *testing.T) {
+	rec := sendRequest(newGeminiRouter(&fakeRepository{}, &fakeGemini{}), http.MethodPost, "/api/v1/products/"+caseID+"/market", "")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "ai_search_unavailable") {
+		t.Errorf("Gemini ฟรี (ไม่เปิด GEMINI_WEB_SEARCH) เช็คราคาตลาดไม่ได้ ต้องได้ 409 ai_search_unavailable ได้ %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGemini_MarketCheckProposalNeedsSearch(t *testing.T) {
 	gemini := &fakeGemini{replies: []string{geminiMarketReply, geminiTextReply}}
 	rec := sendRequest(newGeminiRouter(&fakeRepository{}, gemini), http.MethodPost, "/api/v1/ai/chat", askBody)
 
-	sent := gemini.lastRequestJSON()
-	if !strings.Contains(sent, `"error":"AI ฟรีค้นเว็บไม่ได้`) || !strings.Contains(sent, `"id":"call-9"`) {
-		t.Errorf("AI ฟรีเสนอเช็คราคาตลาดไม่ได้ ต้องบอก AI (พร้อม id เดิม) ได้ %s", sent)
+	if !strings.Contains(gemini.lastRequestJSON(), "ค้นเว็บไม่ได้") || strings.Contains(rec.Body.String(), `"type":"market_check"`) {
+		t.Errorf("Gemini ฟรีเสนอเช็คราคาตลาดไม่ได้ ต้องบอก AI ได้ %s", rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "market_check") {
-		t.Error("ต้องไม่มีงานเช็คราคาตลาดในคำตอบ")
+}
+
+func TestGemini_MarketCheckProposal(t *testing.T) {
+	gemini := &fakeGemini{replies: []string{geminiMarketReply, geminiTextReply}}
+	cfg := Config{GeminiKey: "paid-key", GeminiWebSearch: true, Secret: testSecret}
+	rec := sendRequest(newRouterWith(&fakeRepository{}, cfg, nil, gemini), http.MethodPost, "/api/v1/ai/chat", askBody)
+
+	sent := gemini.lastRequestJSON()
+	if !strings.Contains(sent, `"id":"call-9"`) || strings.Contains(sent, `"error"`) {
+		t.Errorf("AI ฟรีค้น Google ได้แล้ว เสนอเช็คราคาตลาดได้ (ตอบกลับด้วย id เดิม) ได้ %s", sent)
+	}
+	if !strings.Contains(rec.Body.String(), `"type":"market_check"`) || !strings.Contains(rec.Body.String(), `"id":"call-9"`) {
+		t.Errorf("ต้องมีงานเช็คราคาตลาดให้ผู้ใช้กดยืนยัน ได้ %s", rec.Body.String())
 	}
 }
 
@@ -149,13 +166,6 @@ func TestGemini_Errors(t *testing.T) {
 				t.Errorf("ได้ %d %s ต้องได้ %d %s", rec.Code, rec.Body.String(), tt.wantStatus, tt.wantBody)
 			}
 		})
-	}
-}
-
-func TestGemini_MarketCheckNotAvailable(t *testing.T) {
-	rec := sendRequest(newGeminiRouter(&fakeRepository{}, &fakeGemini{}), http.MethodPost, "/api/v1/products/"+caseID+"/market", "")
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "ai_search_unavailable") {
-		t.Errorf("AI ฟรีเช็คราคาตลาดไม่ได้ ต้องได้ 409 ai_search_unavailable ได้ %d %s", rec.Code, rec.Body.String())
 	}
 }
 

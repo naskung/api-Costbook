@@ -24,7 +24,7 @@ type toolError string
 func (e toolError) Error() string { return string(e) }
 
 // toolbox ทำงานตามเครื่องมือที่ AI เรียกในแชท
-// canSearch = AI ที่ใช้อยู่ค้นเว็บได้ไหม (ไม่ได้ → เสนอเช็คราคาตลาดไม่ได้)
+// canSearch = AI ที่ใช้อยู่ค้นเว็บได้ไหม (Claude ได้เสมอ / Gemini ได้เมื่อมี TAVILY_API_KEY หรือเปิด GEMINI_WEB_SEARCH, ไม่ได้ → เสนอเช็คราคาตลาดไม่ได้)
 type toolbox struct {
 	shop      ShopReader
 	repo      Repository
@@ -365,7 +365,7 @@ func (t toolbox) proposeMarketCheck(ctx context.Context, input []byte) (string, 
 		return "", nil, err
 	}
 	if !t.canSearch {
-		return "", nil, toolError("AI ฟรีค้นเว็บไม่ได้ เช็คราคาตลาดต้องใส่ key ของ Claude ที่หน้าตั้งค่าก่อน")
+		return "", nil, toolError("AI ที่ใช้อยู่ค้นเว็บไม่ได้ เช็คราคาตลาดต้องใส่ key ของ Claude ที่หน้าตั้งค่า หรือให้ผู้ดูแลระบบตั้ง TAVILY_API_KEY (ค้นเว็บฟรี)")
 	}
 	p, err := t.findProduct(ctx, in.ProductID)
 	if err != nil {

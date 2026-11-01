@@ -29,20 +29,37 @@ type geminiContent struct {
 	Parts []json.RawMessage `json:"parts"`
 }
 
+// GenerationConfig ใช้ตอนให้ตอบเป็น JSON ตามรูปแบบ (responseMimeType + responseJsonSchema)
 type geminiRequest struct {
 	SystemInstruction geminiContent    `json:"systemInstruction"`
 	Contents          []geminiContent  `json:"contents"`
 	Tools             []map[string]any `json:"tools,omitempty"`
+	GenerationConfig  map[string]any   `json:"generationConfig,omitempty"`
 }
 
 type geminiResponse struct {
 	Candidates []struct {
-		Content      geminiContent `json:"content"`
-		FinishReason string        `json:"finishReason"`
+		Content           geminiContent   `json:"content"`
+		FinishReason      string          `json:"finishReason"`
+		GroundingMetadata geminiGrounding `json:"groundingMetadata"`
 	} `json:"candidates"`
 	PromptFeedback struct {
 		BlockReason string `json:"blockReason"`
 	} `json:"promptFeedback"`
+}
+
+// geminiGrounding ข้อมูลการค้น Google (มีเมื่อส่งเครื่องมือ google_search ไป)
+// groundingChunks = หน้าเว็บที่ใช้, searchEntryPoint.renderedContent = แถบคำค้นแนะนำของ Google (HTML) ที่ต้องแสดงคู่กับผล
+type geminiGrounding struct {
+	GroundingChunks []struct {
+		Web struct {
+			URI   string `json:"uri"`
+			Title string `json:"title"`
+		} `json:"web"`
+	} `json:"groundingChunks"`
+	SearchEntryPoint struct {
+		RenderedContent string `json:"renderedContent"`
+	} `json:"searchEntryPoint"`
 }
 
 // geminiPart อ่านเฉพาะช่องที่ใช้ จากแต่ละ part

@@ -129,7 +129,7 @@ func TestToolbox_MarketCheck_NeedsWebSearch(t *testing.T) {
 	}
 	free := toolbox{shop: fakeShop{}, repo: &fakeRepository{}, today: testToday}
 	_, _, err = free.run(context.Background(), "propose_market_check", []byte(`{"product_id":"`+caseID+`","reason":"x"}`))
-	wantToolError(t, err, "AI ฟรีค้นเว็บไม่ได้")
+	wantToolError(t, err, "ค้นเว็บไม่ได้")
 }
 
 func TestToolbox_CreateProduct_Category(t *testing.T) {

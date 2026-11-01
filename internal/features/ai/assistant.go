@@ -19,16 +19,23 @@ const (
 	sourceEnv      = "env"
 )
 
-// ErrNoWebSearch AI ที่ใช้อยู่ค้นเว็บไม่ได้ (Gemini ฟรี) → เช็คราคาตลาดไม่ได้ ต้องใส่ key Claude
+// ErrNoWebSearch AI ที่ใช้อยู่ค้นเว็บไม่ได้ (Gemini ที่ไม่มี TAVILY_API_KEY และไม่ได้เปิด GEMINI_WEB_SEARCH) → เช็คราคาตลาดไม่ได้
 var ErrNoWebSearch = errors.New("current AI cannot search the web")
 
 // Config ค่าของ AI จาก .env
 // ClaudeKey / GeminiKey ไม่ใส่ก็ได้ / Secret ไว้เข้ารหัส key ที่ร้านใส่ในหน้าตั้งค่า (ใช้ JWT_SECRET)
+// GeminiWebSearch = เปิดให้ Gemini ค้น Google (ต้องเป็น Gemini แบบเสียเงิน แบบฟรีค้นไม่ได้)
+// TavilyKey = ตัวค้นเว็บฟรี ให้ Gemini ฟรีเช็คราคาตลาดได้
 type Config struct {
-	ClaudeKey   string
-	GeminiKey   string
-	GeminiModel string
-	Secret      string
+	ClaudeKey         string
+	GeminiKey         string
+	GeminiModel       string
+	GeminiWebSearch   bool
+	GeminiSearchModel string
+	TavilyKey         string
+	// GeminiFallbackModels รุ่นสำรองเมื่อรุ่นหลักยุ่ง / โควตาเต็ม (ว่าง = DefaultGeminiFallbacks)
+	GeminiFallbackModels []string
+	Secret               string
 }
 
 // Assistant AI ที่ใช้ตอบ (Claude หรือ Gemini) — handler ไม่ต้องรู้ว่าเป็นเจ้าไหน
@@ -49,16 +56,26 @@ func (a claudeAssistant) Research(ctx context.Context, prompt string) (MarketRep
 	return research(ctx, a.claude, prompt)
 }
 
+// geminiAssistant gemini = รุ่นที่แชท / จัดผล
+// เช็คราคาตลาด: useGoogle (GEMINI_WEB_SEARCH) → search ค้น Google / ไม่งั้นมี searcher (Tavily) → ค้นเว็บเอง / ไม่มีทั้งคู่ → ค้นไม่ได้
 type geminiAssistant struct {
-	gemini Gemini
+	gemini    Gemini
+	search    Gemini
+	useGoogle bool
+	searcher  WebSearcher
 }
 
 func (a geminiAssistant) Chat(ctx context.Context, tools toolbox, history []ChatMessage) (ChatReply, error) {
 	return geminiChat(ctx, a.gemini, tools, history)
 }
 
-// Research Gemini ฟรีค้นเว็บไม่ได้ (Google Search ไม่อยู่ในโควตาฟรี) → ไม่เดาราคาเอง
 func (a geminiAssistant) Research(ctx context.Context, prompt string) (MarketReport, error) {
+	if a.useGoogle {
+		return geminiResearch(ctx, a.search, a.gemini, prompt)
+	}
+	if a.searcher != nil {
+		return geminiSearchResearch(ctx, a.searcher, a.gemini, prompt)
+	}
 	return MarketReport{}, ErrNoWebSearch
 }
 
@@ -103,9 +120,24 @@ func pickProvider(savedKey string, cfg Config) Status {
 	case providerClaude:
 		status.Enabled, status.Model, status.WebSearch = true, model, true
 	case providerGemini:
-		status.Enabled, status.Model = true, geminiModelOf(cfg)
+		status.Enabled, status.Model, status.WebSearch = true, geminiModelOf(cfg), cfg.GeminiWebSearch || cfg.TavilyKey != ""
 	}
 	return status
+}
+
+// geminiSearchModelOf รุ่นที่ใช้ค้น Google — ไม่ตั้งไว้ใช้รุ่นเดียวกับแชท
+func geminiSearchModelOf(cfg Config) string {
+	if cfg.GeminiSearchModel == "" {
+		return geminiModelOf(cfg)
+	}
+	return cfg.GeminiSearchModel
+}
+
+func geminiFallbacksOf(cfg Config) []string {
+	if len(cfg.GeminiFallbackModels) == 0 {
+		return DefaultGeminiFallbacks
+	}
+	return cfg.GeminiFallbackModels
 }
 
 func geminiModelOf(cfg Config) string {

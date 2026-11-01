@@ -66,3 +66,34 @@ func TestLoad_MissingRequired(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_AIValues(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/costbook")
+	t.Setenv("JWT_SECRET", "secret")
+	t.Setenv("GEMINI_WEB_SEARCH", "on")
+	t.Setenv("TAVILY_API_KEY", "tvly-test")
+	t.Setenv("GEMINI_FALLBACK_MODELS", " gemini-a , ,gemini-b")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.GeminiWebSearch || cfg.TavilyAPIKey != "tvly-test" {
+		t.Errorf("อ่านค่า AI ไม่ครบ ได้ %+v", cfg)
+	}
+	if len(cfg.GeminiFallbackModels) != 2 || cfg.GeminiFallbackModels[0] != "gemini-a" || cfg.GeminiFallbackModels[1] != "gemini-b" {
+		t.Errorf("รุ่นสำรองต้องแยกด้วย , ตัดช่องว่าง ข้ามค่าว่าง ได้ %q", cfg.GeminiFallbackModels)
+	}
+}
+
+func TestLoad_AIDefaults(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/costbook")
+	t.Setenv("JWT_SECRET", "secret")
+	t.Setenv("GEMINI_WEB_SEARCH", "")
+	t.Setenv("GEMINI_FALLBACK_MODELS", "")
+
+	cfg, _ := Load()
+	if cfg.GeminiWebSearch || cfg.GeminiFallbackModels != nil {
+		t.Errorf("ไม่ตั้งค่า = ปิดค้น Google + ใช้รุ่นสำรองค่าเริ่มต้น ได้ %+v", cfg)
+	}
+}

@@ -31,7 +31,7 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 
 const marketColumns = `id, product_id, our_cost_price, our_sell_price,
 	retail_low, retail_high, retail_typical, wholesale_low, wholesale_high, wholesale_note,
-	market_cost, suggested_price, confidence, summary, advice, cost_items, sources, created_at`
+	market_cost, suggested_price, confidence, summary, advice, cost_items, sources, search_suggestions, created_at`
 
 // LatestMarketCheck ผลเช็คครั้งล่าสุดของสินค้า (ไม่เคยเช็ค → ErrNotFound)
 func (r *PostgresRepository) LatestMarketCheck(ctx context.Context, productID string) (MarketCheck, error) {
@@ -54,12 +54,13 @@ func (r *PostgresRepository) SaveMarketCheck(ctx context.Context, p product.Prod
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO market_checks (product_id, our_cost_price, our_sell_price,
 			retail_low, retail_high, retail_typical, wholesale_low, wholesale_high, wholesale_note,
-			market_cost, suggested_price, confidence, summary, advice, cost_items, sources)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			market_cost, suggested_price, confidence, summary, advice, cost_items, sources, search_suggestions)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING `+marketColumns,
 		p.ID, p.CostPrice, p.SellPrice,
 		report.RetailLow, report.RetailHigh, report.RetailTypical, report.WholesaleLow, report.WholesaleHigh, report.WholesaleNote,
-		report.MarketCost, report.SuggestedPrice, report.Confidence, report.Summary, report.Advice, report.CostItems, report.Sources)
+		report.MarketCost, report.SuggestedPrice, report.Confidence, report.Summary, report.Advice, report.CostItems, report.Sources,
+		report.SearchSuggestions)
 	return scanMarketCheck(row)
 }
 
@@ -81,6 +82,7 @@ func scanMarketCheck(row pgx.Row) (MarketCheck, error) {
 	var m MarketCheck
 	err := row.Scan(&m.ID, &m.ProductID, &m.OurCostPrice, &m.OurSellPrice,
 		&m.RetailLow, &m.RetailHigh, &m.RetailTypical, &m.WholesaleLow, &m.WholesaleHigh, &m.WholesaleNote,
-		&m.MarketCost, &m.SuggestedPrice, &m.Confidence, &m.Summary, &m.Advice, &m.CostItems, &m.Sources, &m.CheckedAt)
+		&m.MarketCost, &m.SuggestedPrice, &m.Confidence, &m.Summary, &m.Advice, &m.CostItems, &m.Sources,
+		&m.SearchSuggestions, &m.CheckedAt)
 	return m, err
 }

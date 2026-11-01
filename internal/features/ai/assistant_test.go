@@ -23,7 +23,8 @@ func TestPickProvider(t *testing.T) {
 	}{
 		{"ร้านใส่ key เอง ใช้ key ของร้านก่อน", ownKey, both, providerClaude, sourceSettings, true},
 		{"ไม่มี key ของร้าน ใช้ key ใน .env", "", both, providerClaude, sourceEnv, true},
-		{"ไม่มี key Claude เลย ใช้ Gemini ฟรี (ค้นเว็บไม่ได้)", "", Config{GeminiKey: "free"}, providerGemini, sourceEnv, false},
+		{"ไม่มี key Claude เลย ใช้ Gemini ฟรี (ค้น Google ไม่ได้)", "", Config{GeminiKey: "free"}, providerGemini, sourceEnv, false},
+		{"Gemini เปิด GEMINI_WEB_SEARCH (แบบเสียเงิน) ค้น Google ได้", "", Config{GeminiKey: "paid", GeminiWebSearch: true}, providerGemini, sourceEnv, true},
 		{"ไม่มีอะไรเลย", "", Config{}, providerNone, "", false},
 	}
 	for _, tt := range tests {

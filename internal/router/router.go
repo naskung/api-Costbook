@@ -80,7 +80,8 @@ func New(cfg config.Config, db *pgxpool.Pool) *gin.Engine {
 		CostRepo: costRepo, DashboardRepo: dashboardRepo, TransactionRepo: transactionRepo,
 	}
 	aiConfig := ai.Config{
-		ClaudeKey: cfg.AnthropicAPIKey, GeminiKey: cfg.GeminiAPIKey, GeminiModel: cfg.GeminiModel, Secret: cfg.JWTSecret,
+		ClaudeKey: cfg.AnthropicAPIKey, GeminiKey: cfg.GeminiAPIKey, GeminiModel: cfg.GeminiModel, GeminiWebSearch: cfg.GeminiWebSearch, GeminiSearchModel: cfg.GeminiSearchModel,
+		TavilyKey: cfg.TavilyAPIKey, GeminiFallbackModels: cfg.GeminiFallbackModels, Secret: cfg.JWTSecret,
 	}
 	aiHandler := ai.NewHandler(ai.NewPostgresRepository(db), shop, aiConfig)
 	aiHandler.RegisterRoutes(api, authRequired)

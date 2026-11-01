@@ -57,27 +57,35 @@ func (c *claudeClient) CheckKey(ctx context.Context) error {
 	return err
 }
 
-// writeAIError แปลง error ของงาน AI เป็น error code ที่ Flutter แปลเป็นข้อความได้
+// writeAIError แปลง error ของงาน AI เป็น error code ที่ Flutter แปลเป็นข้อความได้ + เขียนสาเหตุลง log ทุกครั้ง
 func writeAIError(c *gin.Context, err error) {
 	var apiErr *anthropic.Error
 	var geminiErr *GeminiError
+	var tavilyErr *TavilyError
 	switch {
 	case errors.Is(err, ErrNoWebSearch):
-		helpers.WriteError(c, http.StatusConflict, "ai_search_unavailable")
+		writeAICode(c, http.StatusConflict, "ai_search_unavailable", err.Error())
 	case errors.As(err, &geminiErr):
 		writeGeminiError(c, geminiErr)
+	case errors.As(err, &tavilyErr):
+		writeTavilyError(c, tavilyErr)
 	case errors.Is(err, ErrRefused):
-		helpers.WriteError(c, http.StatusUnprocessableEntity, "ai_refused")
+		writeAICode(c, http.StatusUnprocessableEntity, "ai_refused", err.Error())
 	case errors.Is(err, ErrNoReport), errors.Is(err, ErrTooManySteps):
-		slog.Warn("AI ตอบไม่ครบ", "error", err)
-		helpers.WriteError(c, http.StatusBadGateway, "ai_no_result")
+		writeAICode(c, http.StatusBadGateway, "ai_no_result", err.Error())
 	case errors.Is(err, context.DeadlineExceeded):
-		helpers.WriteError(c, http.StatusGatewayTimeout, "ai_timeout")
+		writeAICode(c, http.StatusGatewayTimeout, "ai_timeout", err.Error())
 	case errors.As(err, &apiErr):
 		writeClaudeAPIError(c, apiErr)
 	default:
 		helpers.ServerError(c, err)
 	}
+}
+
+// writeAICode ตอบ error code ให้ Flutter + เขียนสาเหตุลง log (ดูได้ในหน้าต่าง make run ว่า AI ใช้ไม่ได้เพราะอะไร)
+func writeAICode(c *gin.Context, status int, code, detail string) {
+	slog.Warn("AI ใช้ไม่ได้", "code", code, "detail", detail)
+	helpers.WriteError(c, status, code)
 }
 
 // writeGeminiError error ที่ API ของ Gemini ตอบกลับมา
@@ -87,11 +95,11 @@ func writeGeminiError(c *gin.Context, err *GeminiError) {
 		(err.Status == http.StatusBadRequest && strings.Contains(err.Message, "API key"))
 	switch {
 	case isKeyError:
-		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_key_invalid")
+		writeAICode(c, http.StatusServiceUnavailable, "ai_key_invalid", err.Error())
 	case err.Status == http.StatusTooManyRequests:
-		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_quota_exceeded")
+		writeAICode(c, http.StatusServiceUnavailable, "ai_quota_exceeded", err.Error())
 	case err.Status >= 500:
-		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_busy")
+		writeAICode(c, http.StatusServiceUnavailable, "ai_busy", err.Error())
 	default:
 		slog.Error("เรียก Gemini ไม่สำเร็จ", "status", err.Status, "error", err.Message)
 		helpers.WriteError(c, http.StatusBadGateway, "ai_error")
@@ -101,15 +109,16 @@ func writeGeminiError(c *gin.Context, err *GeminiError) {
 // writeClaudeAPIError error ที่ API ของ Claude ตอบกลับมา
 // เครดิตหมด = ai_credit_low, 401 / 403 = API key ผิด, 429 / 5xx = Claude ไม่ว่าง (ลองใหม่ทีหลัง), อื่น ๆ = เขียนลง log แล้วตอบ ai_error
 func writeClaudeAPIError(c *gin.Context, apiErr *anthropic.Error) {
+	detail := apiErr.RawJSON()
 	switch {
 	case isCreditError(apiErr):
-		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_credit_low")
+		writeAICode(c, http.StatusServiceUnavailable, "ai_credit_low", detail)
 	case apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden:
-		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_key_invalid")
+		writeAICode(c, http.StatusServiceUnavailable, "ai_key_invalid", detail)
 	case apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode >= 500:
-		helpers.WriteError(c, http.StatusServiceUnavailable, "ai_busy")
+		writeAICode(c, http.StatusServiceUnavailable, "ai_busy", detail)
 	default:
-		slog.Error("เรียก Claude ไม่สำเร็จ", "status", apiErr.StatusCode, "error", apiErr)
+		slog.Error("เรียก Claude ไม่สำเร็จ", "status", apiErr.StatusCode, "error", detail)
 		helpers.WriteError(c, http.StatusBadGateway, "ai_error")
 	}
 }
@@ -118,4 +127,17 @@ func writeClaudeAPIError(c *gin.Context, apiErr *anthropic.Error) {
 // (ตอนบันทึก key ลองด้วยการขอรายชื่อรุ่นซึ่งไม่เสียเงิน จึงยังรู้ไม่ได้ว่าเครดิตหมด จะรู้ตอนเรียกใช้จริง)
 func isCreditError(apiErr *anthropic.Error) bool {
 	return apiErr.Type() == anthropic.ErrorTypeBillingError || strings.Contains(apiErr.RawJSON(), "credit balance")
+}
+
+// writeTavilyError error ของตัวค้นเว็บฟรี (Tavily) — 401 / 403 = key ผิด, 429 / 432 / 433 = ค้นถี่เกิน / เครดิตเดือนนี้หมด
+func writeTavilyError(c *gin.Context, err *TavilyError) {
+	switch err.Status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		writeAICode(c, http.StatusServiceUnavailable, "search_key_invalid", err.Error())
+	case http.StatusTooManyRequests, tavilyPlanLimit, tavilyPayLimit:
+		writeAICode(c, http.StatusServiceUnavailable, "search_quota_exceeded", err.Error())
+	default:
+		slog.Error("ค้นเว็บ (Tavily) ไม่สำเร็จ", "status", err.Status, "error", err.Message)
+		helpers.WriteError(c, http.StatusBadGateway, "ai_error")
+	}
 }

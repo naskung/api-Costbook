@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/naskung/api-Costbook/internal/features/stock"
 	"github.com/naskung/api-Costbook/internal/helpers"
 )
 
@@ -101,6 +102,10 @@ func writeRepoError(c *gin.Context, err error) bool {
 		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
 	case errors.Is(err, ErrStockNotEnough):
 		helpers.WriteError(c, http.StatusConflict, "stock_not_enough")
+	case errors.Is(err, ErrNotForSale):
+		helpers.WriteError(c, http.StatusConflict, "product_not_for_sale")
+	case stock.WriteShortage(c, err):
+		// วัสดุไม่พอทำงานที่ไม่นับสต็อก → ตอบไปแล้วใน WriteShortage
 	case errors.Is(err, ErrAlreadyCancelled):
 		helpers.WriteError(c, http.StatusConflict, "invoice_already_cancelled")
 	case errors.Is(err, ErrSellerTaxIDMissing):

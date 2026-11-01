@@ -94,8 +94,8 @@ api-Costbook/
 │       │   └── logic_test.go
 │       ├── field/            ช่องข้อมูลเพิ่มเติมของสินค้าที่ร้านตั้งเอง (ตาราง product_fields)
 │       ├── category/         หมวดหมู่สินค้า (ตาราง product_categories) สินค้าชี้หมวดด้วย category_id
-│       ├── cost/             ใบต้นทุนของสินค้า (ตาราง product_costs) → คำนวณ cost_price + รายการที่ใช้บ่อย (cost_presets)
-│       ├── stock/            คงเหลือ / รับเข้า (คิดต้นทุนเฉลี่ย) / เบิกออก (ตาราง stock_movements)
+│       ├── cost/             ใบต้นทุนของสินค้า (ตาราง product_costs) → คำนวณ cost_price + รายการที่ใช้บ่อย (cost_presets) + refresh.go (ราคาวัสดุเปลี่ยน → คิดต้นทุนสินค้าที่ใช้ใหม่)
+│       ├── stock/            คงเหลือ / รับเข้า (คิดต้นทุนเฉลี่ย) / เบิกออก (ตาราง stock_movements) + materials.go (ตัด / คืนวัสดุตามใบต้นทุน)
 │       ├── transaction/      รายรับ-รายจ่าย + สรุปรายเดือน
 │       ├── invoice/          เอกสารขาย (ใบกำกับภาษี / ใบเสร็จ): ออกใบ (รันเลข + ตัด stock + บันทึกรายรับ) / ยกเลิก
 │       ├── dashboard/        ตัวเลขสรุปหน้าแรก + กราฟ / กำไรขั้นต้น / ขายดี / เทียบตลาด (อ่านอย่างเดียว ไม่มีตารางของตัวเอง)
@@ -168,10 +168,10 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 | status error | เมื่อไหร่ | ตัวอย่าง code |
 |---|---|---|
-| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `month_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid`, `product_image_required`, `product_image_too_large`, `product_image_type_invalid`, `ai_key_format_invalid`, `ai_key_invalid` (ตอนบันทึก key แล้ว Anthropic ไม่รับ) |
+| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `month_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `cost_material_invalid` (วัสดุที่ผูกไม่มีจริง / เป็นสินค้าตัวเอง / บรรทัดแบบ %), `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid`, `product_image_required`, `product_image_too_large`, `product_image_type_invalid`, `ai_key_format_invalid`, `ai_key_invalid` (ตอนบันทึก key แล้ว Anthropic ไม่รับ) |
 | 401 | ยังไม่ login / token ผิดหรือหมดอายุ / login ไม่ผ่าน | `unauthorized`, `invalid_credentials` |
 | 404 | ไม่เจอข้อมูล / ไม่มี path นี้ / id ไม่ใช่ UUID | `product_not_found`, `transaction_not_found`, `invoice_not_found`, `logo_not_found`, `product_image_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
-| 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled`, `company_tax_id_required`, `ai_search_unavailable` (AI ฟรีค้นเว็บไม่ได้ → เช็คราคาตลาดไม่ได้) |
+| 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `material_not_enough` (ตอบ field เพิ่ม `material` / `unit` / `need` / `have` ให้หน้าเว็บโชว์), `product_not_for_sale`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled`, `company_tax_id_required`, `ai_search_unavailable` (AI ฟรีค้นเว็บไม่ได้ → เช็คราคาตลาดไม่ได้) |
 | 422 | AI ปฏิเสธคำขอ (นโยบายความปลอดภัย) | `ai_refused` |
 | 500 | server พัง | `server_error` (ใช้ `helpers.ServerError` → error จริงลง log ไม่ส่งให้ client) |
 | 502 | AI ตอบไม่ครบ / เรียก Claude ไม่สำเร็จ | `ai_no_result`, `ai_error` (รายละเอียดลง log) |
@@ -292,6 +292,19 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 - รับเข้าแล้วใส่ `unit_cost` > 0 → `cost_price` ของสินค้า = ต้นทุนเฉลี่ย `(ของเดิม × ทุนเดิม + ของใหม่ × ทุนใหม่) ÷ จำนวนรวม` (ร้านซื้อมาขายไป ไม่ต้องใช้หน้าคำนวณต้นทุน) — ล็อกแถวสินค้าด้วย `SELECT ... FOR UPDATE` กันรับเข้าพร้อมกันแล้วคิดผิด
 - ประวัติที่มี `invoice_no` = เกิดจากใบกำกับ (out = ออกใบ, in = ยกเลิกใบ)
 
+### รายละเอียด วัสดุในสต็อก (ทำแล้ว, `000012_materials`)
+
+- **วัสดุ** = สินค้าที่ `for_sale = false` (เช่น เส้น PLA เป็นกรัม, ห่วงพวงกุญแจ) — นับสต็อก / รับเข้าใส่ทุนได้เหมือนสินค้าปกติ แต่ **ขายไม่ได้** (ใส่ในเอกสารขาย → 409 `product_not_for_sale`) / ไม่ส่ง `for_sale` = ขาย (`*bool` + `COALESCE`)
+- บรรทัดต้นทุนแบบ `fixed` ผูกวัสดุได้ด้วย `material_id` → API ใช้ **ทุนของวัสดุ** (`cost_price`) + หน่วยของวัสดุเป็น `unit_price` / `unit` เอง ไม่ใช้ค่าที่ส่งมา (`ResolveMaterials` ใน cost) / ผูกตัวเอง หรือวัสดุไม่มีจริง → 400 `cost_material_invalid` / ลบวัสดุ → บรรทัดยังอยู่ แค่หลุดการผูก (`ON DELETE SET NULL`)
+- **ตัดวัสดุอัตโนมัติ** (`stock.UseMaterials` ใน transaction เดียวกัน) — ผู้ใช้เลือก 2026-11-01:
+  - รับสินค้าที่ผลิตเสร็จเข้าสต็อก (`POST /stock/in`) → ตัดวัสดุทุกตัวในใบต้นทุนที่นับสต็อก จำนวนที่ตัด = `round(จำนวนต่อรอบ ÷ batch_quantity × จำนวนที่รับเข้า)` (`stock/logic.go` → `materialNeed`) เช่น พวงกุญแจ 6 ชิ้นใช้ PLA 60 กรัม รับเข้า 12 ชิ้น → ตัด 120 กรัม
+  - ส่ง `skip_materials: true` = ไม่ตัด (ของที่ทำไว้ก่อนแล้ว / ซื้อมา)
+  - สินค้าที่ไม่นับสต็อก (`track_stock = false` เช่น รับพิมพ์ตามไฟล์) → ตัดวัสดุตอน **ขาย** แทน / ยกเลิกเอกสาร → คืนวัสดุ (`stock.ReturnMaterials` รวมจากแถว `is_material` ของเอกสารนั้น)
+  - วัสดุไม่พอ → 409 `material_not_enough` ไม่บันทึกอะไรเลย ตอบวัสดุตัวแรกที่ไม่พอ (เรียงตามชื่อ) `{ "error", "material", "unit", "need", "have" }` (`stock.WriteShortage`)
+  - ประวัติที่ตัด / คืนวัสดุมี `is_material = true` หมายเหตุ `ใช้ผลิต {สินค้า} × {จำนวน}` / `คืนวัสดุ (ยกเลิกเอกสาร)` — ล็อกแถววัสดุ `FOR UPDATE` ก่อนเช็ค
+- **ราคาวัสดุเปลี่ยน → ต้นทุนสินค้าที่ใช้เปลี่ยนตาม** (`cost.RefreshDependents`): เรียกหลังรับเข้าที่ทำให้ทุนเฉลี่ยเปลี่ยน / แก้สินค้า / บันทึกใบต้นทุน — ไล่หาสินค้าที่ผูกวัสดุนี้ (BFS + กันวนซ้ำ เผื่อวัสดุทำจากวัสดุอีกที) แล้วคิด `amount` + `cost_price` ใหม่ / `cost.DB` เป็น interface ที่ทั้ง pool และ tx ใช้ได้
+- `cost_price` มีทศนิยม 2 ตำแหน่ง → ทุนต่อกรัมถูกปัด (เช่น 0.459 → 0.46) / จำนวนที่ตัดเป็นจำนวนเต็ม (stock เป็น `INTEGER`)
+
 ### รายละเอียด ภาพรวมแบบละเอียด + AI (ทำแล้ว)
 
 **ภาพรวม** (`GET /dashboard`) เพิ่ม `sales`, `previous`, `monthly_trend`, `daily_sales`, `previous_daily_sales`, `top_products`, `category_sales`, `expense_by_category`, `stock`, `market` (field เดิมยังอยู่ แอปเก่าใช้ได้)
@@ -396,23 +409,23 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | ตาราง | เก็บอะไร | column หลัก |
 |---|---|---|
 | `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type, vat_registered, prices_include_vat, use_cost_page (`000007`), ai_key (key ของ Claude แบบเข้ารหัส ว่าง = ไม่มี `000009_ai_key`) |
-| `products` | สินค้า (migration `000003_create_products`) | id, code (ห้ามซ้ำถ้าไม่ว่าง), name, category_id (→ `product_categories`, ลบหมวด = `NULL`, `000011` — เดิมเป็นข้อความ `category`), description, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0), track_stock, custom_fields (`JSONB`), image (`BYTEA` ว่างได้) + image_content_type + image_version (`000010`) |
+| `products` | สินค้า (migration `000003_create_products`) | id, code (ห้ามซ้ำถ้าไม่ว่าง), name, category_id (→ `product_categories`, ลบหมวด = `NULL`, `000011` — เดิมเป็นข้อความ `category`), description, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0), track_stock, for_sale (false = วัสดุ `000012`), custom_fields (`JSONB`), image (`BYTEA` ว่างได้) + image_content_type + image_version (`000010`) |
 | `product_categories` | หมวดหมู่สินค้า (`000011_product_categories`, ชื่อห้ามซ้ำ `lower(btrim(name))`) | id, name |
 | `product_fields` | ช่องข้อมูลเพิ่มเติมที่ร้านตั้งเอง (`000007_flexible_shop`) | id, name, type (text / number / date / select), options (`TEXT[]`), show_in_list, sort_order |
-| `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), kind (fixed / percent), name, quantity, unit, unit_price, percent, amount |
+| `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), kind (fixed / percent), name, quantity, unit, unit_price, percent, amount, material_id (→ `products` วัสดุ ห้ามเป็นตัวเอง ลบวัสดุ = `NULL` `000012`) |
 | `cost_presets` | รายการต้นทุนที่ใช้บ่อย (`000007`) | id, type, kind, name, unit, unit_price, percent |
 | `invoices` | เอกสารขาย (`000004_create_invoices`) | id, doc_type (tax_invoice / receipt), invoice_no (ห้ามซ้ำ), issue_date, status (issued / cancelled), seller_* + customer_* ณ วันที่ออก, note, prices_include_vat, items_total, discount, subtotal, vat, total, cancelled_at |
 | `invoice_items` | รายการในเอกสาร (`000004`, สินค้าที่อยู่ในนี้ลบไม่ได้) | id, invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount, stock_cut (ตัด stock ไปไหม → ยกเลิกใบคืนเฉพาะที่ตัด), cost_price (ต้นทุน ณ วันที่ขาย `000008`) |
 | `invoice_numbers` | ตัวรันเลขที่ (`000004`) | doc_type + year (คู่กันเป็น key), last_number |
 | `market_checks` | ผลเช็คราคาตลาดด้วย AI (`000008_ai_market`, ลบสินค้า → ลบด้วย) | id, product_id, our_cost_price, our_sell_price, retail_low / high / typical, wholesale_low / high / note, market_cost, suggested_price, confidence (low / medium / high), summary, advice, cost_items (`JSONB`), sources (`JSONB`), created_at |
-| `stock_movements` | ประวัติรับเข้า / เบิกออก (`000005_create_stock_movements`) | id, product_id, type (in / out), quantity, note, unit_cost, supplier, invoice_id, created_at |
+| `stock_movements` | ประวัติรับเข้า / เบิกออก (`000005_create_stock_movements`) | id, product_id, type (in / out), quantity, note, unit_cost, supplier, invoice_id, is_material (ตัด / คืนวัสดุอัตโนมัติ `000012`), created_at |
 | `transactions` | รายรับ-รายจ่าย (`000006_create_transactions`) | id, type (income / expense), category, amount (> 0), date, note, invoice_id (ห้ามซ้ำ) |
 | `users` | ผู้ใช้ที่ login ได้ (migration `000001_create_users`) | id, email (ห้ามซ้ำ), password_hash (bcrypt), first_name, last_name |
 
 - ทุกตารางมี `created_at` และ `updated_at`
 - `line_no` = ลำดับบรรทัดตามที่ผู้ใช้กรอก — บันทึกหลายบรรทัดใน transaction เดียว `created_at` เท่ากันหมด เรียงด้วย `created_at` ไม่ได้
 - migration รันเองด้วย `psql costbook -f migrations/<ไฟล์>.up.sql` ตามลำดับเลข (ยังไม่ได้ใช้ `golang-migrate`)
-- `cost_price` = `utils.CostPerUnit(วัตถุดิบ, ค่าแรง, ค่าใช้จ่ายอื่น, batch_quantity)` คำนวณใหม่ทุกครั้งที่ `product_costs` เปลี่ยน
+- `cost_price` = `utils.CostPerUnit(วัตถุดิบ, ค่าแรง, ค่าใช้จ่ายอื่น, batch_quantity)` คำนวณใหม่ทุกครั้งที่ `product_costs` เปลี่ยน หรือทุนของวัสดุที่ผูกไว้เปลี่ยน
 
 ---
 
@@ -617,7 +630,8 @@ productHandler.RegisterRoutes(api)
 | เรื่อง | กฎ |
 |---|---|
 | คำนวณ VAT | คิด **ทั้งใบ** หลังหักส่วนลด ไม่คิดทีละบรรทัด (`invoice/logic.go` → `documentAmounts`): ราคาไม่รวม VAT → `vat = utils.VAT(ยอดหลังลด)` / ราคารวม VAT แล้ว → `subtotal = utils.PriceBeforeVAT(ยอดหลังลด)`, `vat = ยอด − subtotal` / ใบเสร็จ → `vat = 0` |
-| ตัด stock | เฉพาะสินค้าที่ `track_stock = true`: `UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1` ถ้าไม่มีแถวไหนถูกแก้ = stock ไม่พอ → 409 `stock_not_enough` |
+| ตัด stock | เฉพาะสินค้าที่ `track_stock = true`: `UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1` ถ้าไม่มีแถวไหนถูกแก้ = stock ไม่พอ → 409 `stock_not_enough` / สินค้าไม่นับสต็อกที่ใบต้นทุนผูกวัสดุ → ตัดวัสดุแทน (ไม่พอ 409 `material_not_enough`) / วัสดุ (`for_sale = false`) ขายไม่ได้ 409 `product_not_for_sale` |
+| ตัดวัสดุตอนรับเข้า | รับสินค้าที่ผลิตเสร็จเข้าสต็อก → ตัดวัสดุตามใบต้นทุน (ไม่พอ = ไม่ให้รับเข้า เว้นแต่ส่ง `skip_materials`) — ดูหัวข้อ 7 "รายละเอียด วัสดุในสต็อก" |
 | เลขที่เอกสาร | `INV-2026-0001` (ใบกำกับ) / `RC-2026-0001` (ใบเสร็จ) แยกเลขกัน รันใหม่ทุกปี ใช้ `INSERT ... ON CONFLICT (doc_type, year) DO UPDATE SET last_number = last_number + 1 RETURNING last_number` ใน transaction → เลขไม่ซ้ำแม้กดพร้อมกัน |
 | แก้ / ลบใบกำกับ | **ห้าม** ถ้าผิดให้ยกเลิก (`status = cancelled`) แล้วออกใบใหม่ |
 | ยกเลิกใบกำกับ | คืน stock + ลบรายรับที่ผูกกับใบนั้น (ทำใน transaction เดียว) |

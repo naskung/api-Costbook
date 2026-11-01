@@ -26,3 +26,26 @@ func TestAverageCost(t *testing.T) {
 		})
 	}
 }
+
+func TestMaterialNeed(t *testing.T) {
+	tests := []struct {
+		name          string
+		perBatch      float64
+		batchQuantity int
+		quantity      int
+		want          int
+	}{
+		{"เคส 1 ชิ้น/รอบ ใช้ TPU 30 กรัม ผลิต 10 ชิ้น = 300 กรัม", 30, 1, 10, 300},
+		{"พวงกุญแจ 6 ชิ้น/รอบ ใช้ PLA 60 กรัม ผลิต 4 ชิ้น = 40 กรัม", 60, 6, 4, 40},
+		{"ห่วง 6 อัน/รอบ ผลิต 1 ชิ้น = 1 อัน", 6, 6, 1, 1},
+		{"เศษปัดตอนรวม 2.5 กรัม × 3 = 7.5 → 8", 2.5, 1, 3, 8},
+		{"จำนวนต่อรอบเป็น 0 (ข้อมูลผิด) คิดเป็น 1 ชิ้น/รอบ", 10, 0, 2, 20},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := materialNeed(tt.perBatch, tt.batchQuantity, tt.quantity); got != tt.want {
+				t.Errorf("materialNeed() = %d, ต้องได้ %d", got, tt.want)
+			}
+		})
+	}
+}

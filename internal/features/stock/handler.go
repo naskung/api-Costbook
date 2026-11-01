@@ -90,6 +90,9 @@ func (h *Handler) addMovement(c *gin.Context, movementType string) {
 		helpers.WriteError(c, http.StatusConflict, "stock_not_tracked")
 		return
 	}
+	if WriteShortage(c, err) {
+		return
+	}
 	if err != nil {
 		helpers.ServerError(c, err)
 		return

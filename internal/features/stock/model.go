@@ -20,6 +20,7 @@ type StockItem struct {
 // Movement ประวัติรับเข้า / เบิกออก 1 ครั้ง
 // type: in = รับเข้า, out = เบิกออก / invoice_no ไม่ว่าง = เกิดจากเอกสารขาย (ออกใบ = out, ยกเลิกใบ = in)
 // unit_cost = ราคาทุนต่อหน่วยตอนรับเข้า (0 = ไม่ได้ใส่), supplier = ซื้อจากใคร
+// is_material = ตัด / คืนวัสดุที่ใช้ผลิตสินค้าอื่น (ตามใบต้นทุน) ไม่ได้กดเอง
 type Movement struct {
 	ID          string    `json:"id"`
 	ProductID   string    `json:"product_id"`
@@ -31,17 +32,32 @@ type Movement struct {
 	InvoiceNo   string    `json:"invoice_no"`
 	UnitCost    float64   `json:"unit_cost"`
 	Supplier    string    `json:"supplier"`
+	IsMaterial  bool      `json:"is_material"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
 // MovementRequest ข้อมูลที่รับมาตอนรับเข้า / เบิกออก
 // unit_cost (ใช้ตอนรับเข้า ไม่ใส่ก็ได้) > 0 → คิดต้นทุนเฉลี่ยของสินค้าใหม่
+// รับเข้า = ผลิตเสร็จ → ตัดวัสดุตามใบต้นทุนให้ / skip_materials = true → ไม่ตัด (เช่น ของที่ทำไว้ก่อนเริ่มใช้ระบบ)
 type MovementRequest struct {
-	ProductID string  `json:"product_id"`
-	Quantity  int     `json:"quantity"`
-	Note      string  `json:"note"`
-	UnitCost  float64 `json:"unit_cost"`
-	Supplier  string  `json:"supplier"`
+	ProductID     string  `json:"product_id"`
+	Quantity      int     `json:"quantity"`
+	Note          string  `json:"note"`
+	UnitCost      float64 `json:"unit_cost"`
+	Supplier      string  `json:"supplier"`
+	SkipMaterials bool    `json:"skip_materials"`
+}
+
+// MaterialShortage วัสดุในสต็อกไม่พอผลิต / ขาย (handler ตอบ 409 material_not_enough พร้อมชื่อวัสดุ)
+type MaterialShortage struct {
+	Name string
+	Unit string
+	Need int
+	Have int
+}
+
+func (e *MaterialShortage) Error() string {
+	return "material not enough: " + e.Name
 }
 
 // Validate เช็คข้อมูลก่อนบันทึก คืน error code ("" = ผ่าน)

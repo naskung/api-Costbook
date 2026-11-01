@@ -24,7 +24,9 @@ const (
 
 // fakeRepository ฐานข้อมูลปลอม เก็บจำนวนคงเหลือของสินค้าใน map ใช้แทน Postgres ตอน test
 type fakeRepository struct {
-	stock      map[string]int // product_id → จำนวนคงเหลือ
+	stock      map[string]int    // product_id → จำนวนคงเหลือ
+	shortage   *MaterialShortage // ใส่ค่านี้เมื่ออยากจำลองว่าวัสดุไม่พอผลิต
+	gotSkip    bool
 	gotOnlyLow bool
 	gotProduct string
 	err        error // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
@@ -50,6 +52,10 @@ func (f *fakeRepository) AddMovement(ctx context.Context, movementType string, r
 	}
 	if req.ProductID == serviceID {
 		return Movement{}, ErrNotTracked
+	}
+	f.gotSkip = req.SkipMaterials
+	if f.shortage != nil && movementType == "in" && !req.SkipMaterials {
+		return Movement{}, f.shortage
 	}
 	change := req.Quantity
 	if movementType == "out" {
@@ -195,5 +201,31 @@ func TestHandler_StockIn_ReturnsMovement(t *testing.T) {
 	json.NewDecoder(rec.Body).Decode(&got)
 	if got.Type != "in" || got.Quantity != 3 {
 		t.Errorf("ได้ %+v, ต้องได้ type in จำนวน 3", got)
+	}
+}
+
+func TestHandler_StockIn_MaterialShortage(t *testing.T) {
+	repo := &fakeRepository{
+		stock:    map[string]int{coffeeID: 0},
+		shortage: &MaterialShortage{Name: "เส้น TPU", Unit: "กรัม", Need: 300, Have: 100},
+	}
+	rec := sendRequest(newTestRouter(repo), http.MethodPost, "/api/v1/stock/in", `{"product_id":"`+coffeeID+`","quantity":10}`)
+
+	want := `{"error":"material_not_enough","have":100,"material":"เส้น TPU","need":300,"unit":"กรัม"}`
+	if rec.Code != http.StatusConflict || rec.Body.String() != want {
+		t.Errorf("ได้ %d %s, ต้องได้ 409 %s", rec.Code, rec.Body.String(), want)
+	}
+}
+
+func TestHandler_StockIn_SkipMaterials(t *testing.T) {
+	repo := &fakeRepository{
+		stock:    map[string]int{coffeeID: 0},
+		shortage: &MaterialShortage{Name: "เส้น TPU", Unit: "กรัม", Need: 300, Have: 100},
+	}
+	body := `{"product_id":"` + coffeeID + `","quantity":10,"skip_materials":true}`
+	rec := sendRequest(newTestRouter(repo), http.MethodPost, "/api/v1/stock/in", body)
+
+	if rec.Code != http.StatusCreated || !repo.gotSkip {
+		t.Errorf("ได้ %d (skip = %v), ต้องได้ 201 และส่ง skip_materials ต่อให้ repository", rec.Code, repo.gotSkip)
 	}
 }

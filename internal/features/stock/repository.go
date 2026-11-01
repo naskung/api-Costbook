@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/naskung/api-Costbook/internal/features/cost"
 )
 
 // ErrProductNotFound ใช้บอก handler ว่าไม่เจอสินค้า (handler จะตอบ 404)
@@ -60,7 +61,7 @@ func (r *PostgresRepository) List(ctx context.Context, onlyLow bool) ([]StockIte
 // movementSelect อ่านประวัติพร้อมชื่อสินค้าและเลขที่ใบกำกับ เรียงตรงกับ scanMovement
 const movementSelect = `
 	SELECT m.id, m.product_id, p.name, p.unit, m.type, m.quantity, m.note, COALESCE(i.invoice_no, ''),
-		m.unit_cost, m.supplier, m.created_at
+		m.unit_cost, m.supplier, m.is_material, m.created_at
 	FROM stock_movements m
 	JOIN products p ON p.id = m.product_id
 	LEFT JOIN invoices i ON i.id = m.invoice_id`
@@ -88,6 +89,7 @@ func (r *PostgresRepository) Movements(ctx context.Context, productID string) ([
 }
 
 // AddMovement รับเข้า (in) / เบิกออก (out): แก้จำนวนคงเหลือ (+ ต้นทุนเฉลี่ย) + บันทึกประวัติ ทำใน transaction เดียว
+// รับเข้า = ผลิตเสร็จ → ตัดวัสดุตามใบต้นทุน (ยกเว้น skip_materials) / ต้นทุนเปลี่ยน → คิดต้นทุนสินค้าที่ใช้สิ่งนี้เป็นวัสดุใหม่
 func (r *PostgresRepository) AddMovement(ctx context.Context, movementType string, req MovementRequest) (Movement, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -95,10 +97,11 @@ func (r *PostgresRepository) AddMovement(ctx context.Context, movementType strin
 	}
 	defer tx.Rollback(ctx) // ถ้า Commit แล้ว คำสั่งนี้ไม่ทำอะไร
 
-	stock, cost, err := lockProduct(ctx, tx, req.ProductID)
+	stock, oldCost, err := lockProduct(ctx, tx, req.ProductID)
 	if err != nil {
 		return Movement{}, err
 	}
+	newCost := oldCost
 
 	if movementType == "out" {
 		if stock < req.Quantity {
@@ -107,15 +110,25 @@ func (r *PostgresRepository) AddMovement(ctx context.Context, movementType strin
 		stock -= req.Quantity
 	} else {
 		if req.UnitCost > 0 {
-			cost = averageCost(stock, cost, req.Quantity, req.UnitCost)
+			newCost = averageCost(stock, oldCost, req.Quantity, req.UnitCost)
 		}
 		stock += req.Quantity
+		if !req.SkipMaterials {
+			if err := UseMaterials(ctx, tx, req.ProductID, req.Quantity, ""); err != nil {
+				return Movement{}, err
+			}
+		}
 	}
 
 	_, err = tx.Exec(ctx, `UPDATE products SET stock = $2, cost_price = $3, updated_at = now() WHERE id = $1`,
-		req.ProductID, stock, cost)
+		req.ProductID, stock, newCost)
 	if err != nil {
 		return Movement{}, err
+	}
+	if newCost != oldCost {
+		if err := cost.RefreshDependents(ctx, tx, req.ProductID); err != nil {
+			return Movement{}, err
+		}
 	}
 
 	var id string
@@ -157,6 +170,6 @@ func lockProduct(ctx context.Context, tx pgx.Tx, productID string) (int, float64
 func scanMovement(row pgx.Row) (Movement, error) {
 	var m Movement
 	err := row.Scan(&m.ID, &m.ProductID, &m.ProductName, &m.Unit, &m.Type, &m.Quantity, &m.Note, &m.InvoiceNo,
-		&m.UnitCost, &m.Supplier, &m.CreatedAt)
+		&m.UnitCost, &m.Supplier, &m.IsMaterial, &m.CreatedAt)
 	return m, err
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/naskung/api-Costbook/internal/features/cost"
 )
 
 // ErrNotFound ใช้บอก handler ว่าไม่เจอสินค้า (handler จะตอบ 404)
@@ -54,7 +55,7 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 // productColumns column ที่ใช้อ่านสินค้า (p = สินค้า, c = หมวด) เรียงตรงกับ scanProduct
 const productColumns = `p.id, p.code, p.name, COALESCE(p.category_id::text, ''), COALESCE(c.name, ''),
 	p.description, p.unit, p.cost_price, p.sell_price,
-	p.stock, p.min_stock, p.batch_quantity, p.track_stock, p.custom_fields, p.image_version`
+	p.stock, p.min_stock, p.batch_quantity, p.track_stock, p.for_sale, p.custom_fields, p.image_version`
 
 // withCategory ต่อชื่อหมวดเข้ากับสินค้า p (ใช้หลัง FROM products p หรือ CTE ชื่อ p)
 const withCategory = ` LEFT JOIN product_categories c ON c.id = p.category_id`
@@ -89,12 +90,12 @@ func (r *PostgresRepository) Create(ctx context.Context, req ProductRequest) (Pr
 	row := r.db.QueryRow(ctx, `
 		WITH p AS (
 			INSERT INTO products (code, name, category_id, description, unit, cost_price, sell_price,
-				min_stock, track_stock, custom_fields)
-			VALUES ($1, $2, NULLIF($3::text, '')::uuid, $4, $5, $6, $7, $8, $9, $10)
+				min_stock, track_stock, custom_fields, for_sale)
+			VALUES ($1, $2, NULLIF($3::text, '')::uuid, $4, $5, $6, $7, $8, $9, $10, $11)
 			RETURNING *
 		)`+selectSaved,
 		req.Code, req.Name, req.categoryIDText(), req.Description, req.Unit, req.CostPrice, req.SellPrice,
-		req.MinStock, req.trackStock(), req.customFields())
+		req.MinStock, req.trackStock(), req.customFields(), req.forSale())
 	return saveErrorOr(scanProduct(row))
 }
 
@@ -107,13 +108,18 @@ func (r *PostgresRepository) Update(ctx context.Context, id string, req ProductR
 				category_id = CASE WHEN $4::text IS NULL THEN category_id ELSE NULLIF($4::text, '')::uuid END,
 				description = $5, unit = $6, cost_price = $7, sell_price = $8, min_stock = $9,
 				track_stock = COALESCE($10, track_stock), custom_fields = COALESCE($11, custom_fields),
-				updated_at = now()
+				for_sale = COALESCE($12, for_sale), updated_at = now()
 			WHERE id = $1
 			RETURNING *
 		)`+selectSaved,
 		id, req.Code, req.Name, req.CategoryID, req.Description, req.Unit, req.CostPrice, req.SellPrice,
-		req.MinStock, req.TrackStock, req.CustomFields)
-	return saveErrorOr(scanProduct(row))
+		req.MinStock, req.TrackStock, req.CustomFields, req.ForSale)
+	product, err := saveErrorOr(scanProduct(row))
+	if err != nil {
+		return Product{}, err
+	}
+	// แก้ต้นทุนเอง → สินค้าที่ใช้สิ่งนี้เป็นวัสดุต้องคิดต้นทุนใหม่ด้วย
+	return product, cost.RefreshDependents(ctx, r.db, id)
 }
 
 func (r *PostgresRepository) Delete(ctx context.Context, id string) error {
@@ -182,7 +188,7 @@ func (r *PostgresRepository) DeleteImage(ctx context.Context, id string) (Produc
 func scanProduct(row pgx.Row) (Product, error) {
 	var p Product
 	err := row.Scan(&p.ID, &p.Code, &p.Name, &p.CategoryID, &p.Category, &p.Description, &p.Unit, &p.CostPrice, &p.SellPrice,
-		&p.Stock, &p.MinStock, &p.BatchQuantity, &p.TrackStock, &p.CustomFields, &p.ImageVersion)
+		&p.Stock, &p.MinStock, &p.BatchQuantity, &p.TrackStock, &p.ForSale, &p.CustomFields, &p.ImageVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Product{}, ErrNotFound
 	}

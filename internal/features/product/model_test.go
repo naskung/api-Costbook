@@ -73,3 +73,13 @@ func TestProductRequest_CustomFields(t *testing.T) {
 		t.Errorf("ไม่ส่งมา ได้ %#v, ต้องได้ map ว่าง (ไม่ใช่ nil)", got)
 	}
 }
+
+func TestProductRequest_ForSale(t *testing.T) {
+	no := false
+	if !(ProductRequest{}).forSale() {
+		t.Error("ไม่ส่ง for_sale มา ต้องเป็นสินค้าที่ขาย")
+	}
+	if (ProductRequest{ForSale: &no}).forSale() {
+		t.Error("ส่ง for_sale = false ต้องเป็นวัสดุ (ไม่ขาย)")
+	}
+}

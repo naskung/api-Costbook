@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.8.0
+  version: 0.9.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -945,7 +945,10 @@ paths:
     post:
       tags: [stock]
       summary: รับสินค้าเข้า
-      description: ใส่ unit_cost (ราคาทุนต่อหน่วย) มาด้วย → คิดต้นทุนเฉลี่ยของสินค้าใหม่ = (ของเดิม × ทุนเดิม + ของใหม่ × ทุนใหม่) ÷ จำนวนรวม
+      description: |
+        - ใส่ unit_cost (ราคาทุนต่อหน่วย) มาด้วย → คิดต้นทุนเฉลี่ยของสินค้าใหม่ = (ของเดิม × ทุนเดิม + ของใหม่ × ทุนใหม่) ÷ จำนวนรวม → สินค้าที่ใช้สิ่งนี้เป็นวัสดุคิดต้นทุนใหม่ให้
+        - รับเข้า = ผลิตเสร็จ → ตัดวัสดุตามใบต้นทุน (บรรทัดที่มี material_id) จำนวน = จำนวนในบรรทัด ÷ ผลิตได้ต่อรอบ × จำนวนที่รับเข้า (ปัดเป็นจำนวนเต็ม) / `skip_materials: true` = ไม่ตัด
+        - วัสดุตัวไหนไม่พอ → 409 `material_not_enough` (ไม่บันทึกอะไรเลย)
       operationId: stockIn
       security:
         - bearerAuth: []
@@ -965,7 +968,18 @@ paths:
         "404":
           $ref: "#/components/responses/ProductNotFound"
         "409":
-          $ref: "#/components/responses/StockNotTracked"
+          description: สินค้านี้ไม่นับสต็อก / วัสดุไม่พอผลิต
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/Error"
+                  - $ref: "#/components/schemas/MaterialShortage"
+              examples:
+                stock_not_tracked:
+                  value: { error: stock_not_tracked }
+                material_not_enough:
+                  value: { error: material_not_enough, material: เส้น TPU, unit: กรัม, need: 300, have: 100 }
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -1215,7 +1229,7 @@ paths:
         "404":
           $ref: "#/components/responses/ProductNotFound"
         "409":
-          description: ของในสต็อกไม่พอ / ร้านจด VAT แต่ยังไม่มีเลขผู้เสียภาษี
+          description: ของในสต็อกไม่พอ / ร้านจด VAT แต่ยังไม่มีเลขผู้เสียภาษี / สินค้าเป็นวัสดุ / วัสดุไม่พอ
           content:
             application/json:
               schema:
@@ -1225,6 +1239,12 @@ paths:
                   value: { error: stock_not_enough }
                 company_tax_id_required:
                   value: { error: company_tax_id_required }
+                product_not_for_sale:
+                  summary: สินค้านี้เป็นวัสดุ (for_sale = false) ขายไม่ได้
+                  value: { error: product_not_for_sale }
+                material_not_enough:
+                  summary: งานที่ไม่นับสต็อกตัดวัสดุตอนขาย วัสดุไม่พอ (มีชื่อวัสดุ / ต้องใช้ / มีอยู่ ดู MaterialShortage)
+                  value: { error: material_not_enough, material: เส้น PLA, unit: กรัม, need: 60, have: 20 }
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -1710,6 +1730,9 @@ components:
             cost_type_invalid:
               summary: type ต้องเป็น material / labor / overhead
               value: { error: cost_type_invalid }
+            cost_material_invalid:
+              summary: material_id ไม่มีจริง / เป็นสินค้าตัวเอง / ใช้กับบรรทัด % ไม่ได้
+              value: { error: cost_material_invalid }
             cost_kind_invalid:
               summary: kind ต้องเป็น fixed / percent
               value: { error: cost_kind_invalid }
@@ -1935,6 +1958,10 @@ components:
           type: boolean
           description: false = ไม่นับสต็อก (งานสั่งทำ / ค่าบริการ) ขายได้ไม่จำกัด / ไม่ส่งมาตอนเพิ่ม-แก้ = true
           example: true
+        for_sale:
+          type: boolean
+          description: false = วัสดุ / ส่วนประกอบ ไม่ขาย (ไม่ขึ้นในหน้าขาย เอกสารขายไม่รับ) ใช้ในใบต้นทุนของสินค้าอื่น / ไม่ส่งมาตอนเพิ่ม = true ตอนแก้ = ค่าเดิม
+          example: true
         custom_fields:
           type: object
           description: ค่าของช่องข้อมูลเพิ่มเติม key = id ของช่อง (GET /product-fields) ค่าเป็นข้อความเสมอ
@@ -1986,6 +2013,10 @@ components:
           type: boolean
           description: false = ไม่นับสต็อก (งานสั่งทำ / ค่าบริการ) ขายได้ไม่จำกัด / ไม่ส่งมาตอนเพิ่ม-แก้ = true
           example: true
+        for_sale:
+          type: boolean
+          description: false = วัสดุ / ส่วนประกอบ ไม่ขาย (ไม่ขึ้นในหน้าขาย เอกสารขายไม่รับ) ใช้ในใบต้นทุนของสินค้าอื่น / ไม่ส่งมาตอนเพิ่ม = true ตอนแก้ = ค่าเดิม
+          example: true
         custom_fields:
           type: object
           description: ค่าของช่องข้อมูลเพิ่มเติม key = id ของช่อง (GET /product-fields) ค่าเป็นข้อความเสมอ
@@ -2028,6 +2059,10 @@ components:
         id:
           type: string
           format: uuid
+        material_id:
+          type: string
+          description: ว่าง = ไม่ผูกวัสดุ / มีค่า = ใช้วัสดุจากสต็อก — unit_price + unit มาจากวัสดุ อัปเดตเองเมื่อราคาวัสดุเปลี่ยน และรับสินค้าเข้าแล้วตัดวัสดุตามจำนวนบรรทัดนี้
+          example: ""
         type:
           type: string
           enum: [material, labor, overhead]
@@ -2077,6 +2112,9 @@ components:
       type: object
       required: [type, kind, name]
       properties:
+        material_id:
+          type: string
+          description: id ของวัสดุ (สินค้าที่ไม่ขาย) — ส่งมา = API ใช้ต้นทุน + หน่วยของวัสดุแทนค่าที่ส่งมา (ต้องเป็น kind fixed และไม่ใช่สินค้าตัวเอง)
         type:
           type: string
           enum: [material, labor, overhead]
@@ -2290,6 +2328,9 @@ components:
           type: string
           description: ซื้อจากใคร
           example: ร้านส่ง ABC
+        is_material:
+          type: boolean
+          description: true = ตัด / คืนวัสดุที่ใช้ผลิตสินค้าอื่นอัตโนมัติ (note บอกว่าใช้ผลิตอะไร)
         created_at:
           type: string
           format: date-time
@@ -2317,6 +2358,34 @@ components:
           type: string
           description: ซื้อจากใคร
           example: ร้านส่ง ABC
+        skip_materials:
+          type: boolean
+          description: รับเข้าเท่านั้น — true = ไม่ตัดวัสดุตามใบต้นทุน (เช่น ของที่ทำไว้ก่อนเริ่มใช้ระบบ)
+          example: false
+
+    MaterialShortage:
+      type: object
+      description: วัสดุในสต็อกไม่พอผลิต / ขาย
+      required: [error, material, unit, need, have]
+      properties:
+        error:
+          type: string
+          example: material_not_enough
+        material:
+          type: string
+          description: ชื่อวัสดุที่ไม่พอ
+          example: เส้น TPU
+        unit:
+          type: string
+          example: กรัม
+        need:
+          type: integer
+          description: ต้องใช้
+          example: 300
+        have:
+          type: integer
+          description: มีอยู่
+          example: 100
 
     Transaction:
       type: object

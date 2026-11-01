@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/naskung/api-Costbook/internal/features/stock"
 )
 
 // error ที่ handler แปลงเป็น status + error code
@@ -14,6 +15,7 @@ var (
 	ErrNotFound           = errors.New("invoice not found")                     // 404 invoice_not_found
 	ErrProductNotFound    = errors.New("product not found")                     // 404 product_not_found
 	ErrStockNotEnough     = errors.New("stock not enough")                      // 409 stock_not_enough
+	ErrNotForSale         = errors.New("product is not for sale")               // 409 product_not_for_sale (วัสดุ)
 	ErrAlreadyCancelled   = errors.New("invoice already cancelled")             // 409 invoice_already_cancelled
 	ErrSellerTaxIDMissing = errors.New("company tax id is required to invoice") // 409 company_tax_id_required
 	ErrCustomerRequired   = errors.New("tax invoice needs a customer name")     // 400 invoice_customer_required
@@ -163,6 +165,10 @@ func (r *PostgresRepository) Cancel(ctx context.Context, id string) (Invoice, er
 	if err != nil {
 		return Invoice{}, err
 	}
+	err = stock.ReturnMaterials(ctx, tx, id)
+	if err != nil {
+		return Invoice{}, err
+	}
 	_, err = tx.Exec(ctx, `DELETE FROM transactions WHERE invoice_id = $1`, id)
 	if err != nil {
 		return Invoice{}, err
@@ -222,15 +228,18 @@ func insertInvoice(ctx context.Context, tx pgx.Tx, req InvoiceRequest, shop sell
 // สินค้าที่นับสต็อก → ตัด stock + บันทึกประวัติเบิกออก / ไม่นับสต็อก (งานสั่งทำ / บริการ) → ไม่ตัด
 func addItem(ctx context.Context, tx pgx.Tx, invoiceID string, lineNo int, item ItemRequest) error {
 	var name, unit string
-	var trackStock bool
+	var trackStock, forSale bool
 	var costPrice float64
-	err := tx.QueryRow(ctx, `SELECT name, unit, track_stock, cost_price FROM products WHERE id = $1`, item.ProductID).
-		Scan(&name, &unit, &trackStock, &costPrice)
+	err := tx.QueryRow(ctx, `SELECT name, unit, track_stock, for_sale, cost_price FROM products WHERE id = $1`, item.ProductID).
+		Scan(&name, &unit, &trackStock, &forSale, &costPrice)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrProductNotFound
 	}
 	if err != nil {
 		return err
+	}
+	if !forSale {
+		return ErrNotForSale
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -242,7 +251,8 @@ func addItem(ctx context.Context, tx pgx.Tx, invoiceID string, lineNo int, item 
 		return err
 	}
 	if !trackStock {
-		return nil
+		// งานไม่นับสต็อก (รับพิมพ์ / สั่งทำ) → ตัดวัสดุตามใบต้นทุนตอนขาย
+		return stock.UseMaterials(ctx, tx, item.ProductID, item.Quantity, invoiceID)
 	}
 	return cutStock(ctx, tx, invoiceID, item)
 }

@@ -15,6 +15,7 @@ const (
 // Product ข้อมูลสินค้า (ชื่อ json ต้องตรงกับ ProductModel ฝั่ง Flutter)
 // stock เปลี่ยนผ่านหน้าสต็อก / เอกสารขายเท่านั้น, batch_quantity แก้ในหน้าคำนวณต้นทุน
 // track_stock = false → งานสั่งทำ / ค่าบริการ ไม่นับสต็อก ขายได้ไม่จำกัด
+// for_sale = false → วัสดุ / ส่วนประกอบ ไม่ขาย (ไม่ขึ้นในหน้าขาย / เอกสารขาย) ใช้ในใบต้นทุนของสินค้าอื่น
 // custom_fields = ค่าของช่องเพิ่มเติมที่ร้านตั้งเอง {"<id ช่อง>": "ค่า"} (ดู /product-fields)
 // category_id = หมวด (ว่าง = ไม่มีหมวด, จัดการที่ /product-categories), category = ชื่อหมวด (อ่านอย่างเดียว ไว้แสดง)
 // image_version = เวลาที่เปลี่ยนรูปล่าสุด (0 = ไม่มีรูป) → รูปอยู่ที่ GET /products/{id}/image?v=<image_version>
@@ -32,6 +33,7 @@ type Product struct {
 	MinStock      int               `json:"min_stock"`
 	BatchQuantity int               `json:"batch_quantity"`
 	TrackStock    bool              `json:"track_stock"`
+	ForSale       bool              `json:"for_sale"`
 	CustomFields  map[string]string `json:"custom_fields"`
 	ImageVersion  int64             `json:"image_version"`
 }
@@ -44,7 +46,7 @@ type Image struct {
 
 // ProductRequest ข้อมูลที่รับมาตอนเพิ่ม / แก้สินค้า
 // track_stock เป็น pointer เพื่อแยก "ไม่ส่งมา" ออกจาก "ส่ง false มา"
-// ไม่ส่ง track_stock / custom_fields / category_id มา: ตอนเพิ่ม = นับสต็อก / ไม่มีช่องเพิ่มเติม / ไม่มีหมวด, ตอนแก้ = ใช้ค่าเดิม
+// ไม่ส่ง track_stock / for_sale / custom_fields / category_id มา: ตอนเพิ่ม = นับสต็อก / ขาย / ไม่มีช่องเพิ่มเติม / ไม่มีหมวด, ตอนแก้ = ใช้ค่าเดิม
 // category_id = "" → ไม่มีหมวด
 type ProductRequest struct {
 	Code         string            `json:"code"`
@@ -56,6 +58,7 @@ type ProductRequest struct {
 	SellPrice    float64           `json:"sell_price"`
 	MinStock     int               `json:"min_stock"`
 	TrackStock   *bool             `json:"track_stock"`
+	ForSale      *bool             `json:"for_sale"`
 	CustomFields map[string]string `json:"custom_fields"`
 }
 
@@ -90,6 +93,14 @@ func (req ProductRequest) categoryIDText() string {
 		return ""
 	}
 	return *req.CategoryID
+}
+
+// forSale ค่าตอนเพิ่มสินค้า: ไม่ส่ง for_sale มา → ขาย (ค่าเริ่มต้น)
+func (req ProductRequest) forSale() bool {
+	if req.ForSale == nil {
+		return true
+	}
+	return *req.ForSale
 }
 
 // trackStock ค่าตอนเพิ่มสินค้า: ไม่ส่ง track_stock มา → นับสต็อก (ค่าเริ่มต้น)

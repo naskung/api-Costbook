@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/naskung/api-Costbook/internal/features/stock"
 	"github.com/naskung/api-Costbook/internal/middleware"
 	"github.com/naskung/api-Costbook/internal/utils"
 )
@@ -166,6 +167,8 @@ func TestHandler_Create_Errors(t *testing.T) {
 		{"ไม่มีสินค้าในใบ ได้ 400", `{"issue_date":"2026-10-31","customer_name":"ลูกค้า","items":[]}`, nil, http.StatusBadRequest, `{"error":"invoice_items_required"}`},
 		{"ร้านไม่มีเลขผู้เสียภาษี ได้ 409", validBody, ErrSellerTaxIDMissing, http.StatusConflict, `{"error":"company_tax_id_required"}`},
 		{"ของในสต็อกไม่พอ ได้ 409", validBody, ErrStockNotEnough, http.StatusConflict, `{"error":"stock_not_enough"}`},
+		{"สินค้าเป็นวัสดุ (ไม่ขาย) ได้ 409", validBody, ErrNotForSale, http.StatusConflict, `{"error":"product_not_for_sale"}`},
+		{"วัสดุไม่พอทำงานรับพิมพ์ ได้ 409 พร้อมชื่อวัสดุ", validBody, &stock.MaterialShortage{Name: "เส้น PLA", Unit: "กรัม", Need: 60, Have: 20}, http.StatusConflict, `{"error":"material_not_enough","have":20,"material":"เส้น PLA","need":60,"unit":"กรัม"}`},
 		{"ไม่มีสินค้านี้ ได้ 404", validBody, ErrProductNotFound, http.StatusNotFound, `{"error":"product_not_found"}`},
 		{"ใบกำกับไม่มีชื่อลูกค้า ได้ 400", validBody, ErrCustomerRequired, http.StatusBadRequest, `{"error":"invoice_customer_required"}`},
 		{"ส่วนลดเกินยอด ได้ 400", `{"issue_date":"2026-10-31","discount":500,"items":[{"product_id":"` + coffeeID + `","quantity":1,"unit_price":50}]}`, nil, http.StatusBadRequest, `{"error":"invoice_discount_invalid"}`},

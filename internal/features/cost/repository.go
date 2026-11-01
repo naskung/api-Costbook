@@ -11,6 +11,9 @@ import (
 // ErrProductNotFound ใช้บอก handler ว่าไม่เจอสินค้า (handler จะตอบ 404)
 var ErrProductNotFound = errors.New("product not found")
 
+// ErrMaterialInvalid วัสดุที่เลือกไม่มีอยู่จริง หรือเลือกตัวเอง (handler จะตอบ 400)
+var ErrMaterialInvalid = errors.New("cost material is invalid")
+
 // ErrPresetNotFound ใช้บอก handler ว่าไม่เจอรายการที่ใช้บ่อย (handler จะตอบ 404)
 var ErrPresetNotFound = errors.New("cost preset not found")
 
@@ -18,6 +21,7 @@ var ErrPresetNotFound = errors.New("cost preset not found")
 // ทำเป็น interface เพื่อให้ตอน test ใช้ fakeRepository แทน DB จริงได้
 type Repository interface {
 	Get(ctx context.Context, productID string) (CostSheet, error)
+	ResolveMaterials(ctx context.Context, productID string, items []CostItemRequest) ([]CostItemRequest, error)
 	Save(ctx context.Context, productID string, req CostSheetRequest, amounts []float64, costPrice float64) (CostSheet, error)
 	ListPresets(ctx context.Context) ([]CostPreset, error)
 	CreatePreset(ctx context.Context, req PresetRequest) (CostPreset, error)
@@ -78,12 +82,17 @@ func (r *PostgresRepository) Save(ctx context.Context, productID string, req Cos
 	}
 	for i, item := range req.Items {
 		_, err = tx.Exec(ctx, `
-			INSERT INTO product_costs (product_id, line_no, type, kind, name, quantity, unit, unit_price, percent, amount)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			productID, i+1, item.Type, item.Kind, item.Name, item.Quantity, item.Unit, item.UnitPrice, item.Percent, amounts[i])
+			INSERT INTO product_costs (product_id, line_no, type, kind, name, quantity, unit, unit_price, percent, amount, material_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, '')::uuid)`,
+			productID, i+1, item.Type, item.Kind, item.Name, item.Quantity, item.Unit, item.UnitPrice, item.Percent, amounts[i],
+			item.MaterialID)
 		if err != nil {
 			return CostSheet{}, err
 		}
+	}
+	// ต้นทุนของสินค้านี้เปลี่ยน → สินค้าที่ใช้สิ่งนี้เป็นวัสดุต้องคิดต้นทุนใหม่ด้วย
+	if err := RefreshDependents(ctx, tx, productID); err != nil {
+		return CostSheet{}, err
 	}
 
 	err = tx.Commit(ctx)
@@ -93,10 +102,34 @@ func (r *PostgresRepository) Save(ctx context.Context, productID string, req Cos
 	return r.Get(ctx, productID)
 }
 
+// ResolveMaterials บรรทัดที่ผูกวัสดุ → ใช้ราคาต่อหน่วย (ต้นทุนของวัสดุ) + หน่วยของวัสดุ ไม่เชื่อค่าที่ส่งมา
+// วัสดุไม่มีจริง หรือเป็นสินค้าตัวเอง → ErrMaterialInvalid
+func (r *PostgresRepository) ResolveMaterials(ctx context.Context, productID string, items []CostItemRequest) ([]CostItemRequest, error) {
+	resolved := make([]CostItemRequest, len(items))
+	for i, item := range items {
+		resolved[i] = item
+		if item.MaterialID == "" {
+			continue
+		}
+		if item.MaterialID == productID {
+			return nil, ErrMaterialInvalid
+		}
+		err := r.db.QueryRow(ctx, `SELECT unit, cost_price FROM products WHERE id = $1`, item.MaterialID).
+			Scan(&resolved[i].Unit, &resolved[i].UnitPrice)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrMaterialInvalid
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return resolved, nil
+}
+
 // items รายการต้นทุนของสินค้า เรียงตามประเภท แล้วตามลำดับที่กรอก
 func (r *PostgresRepository) items(ctx context.Context, productID string) ([]CostItem, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, type, kind, name, quantity, unit, unit_price, percent, amount
+		SELECT id, COALESCE(material_id::text, ''), type, kind, name, quantity, unit, unit_price, percent, amount
 		FROM product_costs
 		WHERE product_id = $1
 		ORDER BY CASE type WHEN 'material' THEN 1 WHEN 'labor' THEN 2 ELSE 3 END, line_no`, productID)
@@ -108,7 +141,7 @@ func (r *PostgresRepository) items(ctx context.Context, productID string) ([]Cos
 	items := []CostItem{} // ไม่ใช้ nil → JSON จะได้ [] แทน null
 	for rows.Next() {
 		var item CostItem
-		err := rows.Scan(&item.ID, &item.Type, &item.Kind, &item.Name, &item.Quantity, &item.Unit,
+		err := rows.Scan(&item.ID, &item.MaterialID, &item.Type, &item.Kind, &item.Name, &item.Quantity, &item.Unit,
 			&item.UnitPrice, &item.Percent, &item.Amount)
 		if err != nil {
 			return nil, err

@@ -1,6 +1,10 @@
 package cost
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/naskung/api-Costbook/internal/utils"
+)
 
 // percentMax % สูงสุดของบรรทัดแบบเปอร์เซ็นต์ กันพิมพ์ผิดจนต้นทุนเพี้ยน
 const percentMax = 1000
@@ -20,16 +24,19 @@ type CostSheet struct {
 // type: material = วัตถุดิบ, labor = ค่าแรง, overhead = ค่าใช้จ่ายอื่น
 // kind: fixed = quantity × unit_price (เช่น 40 กรัม × 0.45), percent = percent% ของรวมบรรทัด fixed (เช่น เผื่อเสีย 10%)
 // amount = จำนวนเงินที่ API คำนวณให้
+// material_id ไม่ว่าง = ใช้วัสดุจากสต็อก (สินค้าที่ไม่ขาย): ราคาต่อหน่วย + หน่วยมาจากวัสดุ อัปเดตเองเมื่อราคาวัสดุเปลี่ยน
+// และรับสินค้านี้เข้าสต็อก → ตัดวัสดุตามจำนวนบรรทัดนี้
 type CostItem struct {
-	ID        string  `json:"id"`
-	Type      string  `json:"type"`
-	Kind      string  `json:"kind"`
-	Name      string  `json:"name"`
-	Quantity  float64 `json:"quantity"`
-	Unit      string  `json:"unit"`
-	UnitPrice float64 `json:"unit_price"`
-	Percent   float64 `json:"percent"`
-	Amount    float64 `json:"amount"`
+	ID         string  `json:"id"`
+	MaterialID string  `json:"material_id"`
+	Type       string  `json:"type"`
+	Kind       string  `json:"kind"`
+	Name       string  `json:"name"`
+	Quantity   float64 `json:"quantity"`
+	Unit       string  `json:"unit"`
+	UnitPrice  float64 `json:"unit_price"`
+	Percent    float64 `json:"percent"`
+	Amount     float64 `json:"amount"`
 }
 
 // CostSheetRequest ข้อมูลที่รับมาตอนบันทึกหน้าคำนวณต้นทุน (ส่งมาทั้งใบ รายการเดิมจะถูกแทนที่ทั้งหมด)
@@ -40,13 +47,14 @@ type CostSheetRequest struct {
 }
 
 type CostItemRequest struct {
-	Type      string  `json:"type"`
-	Kind      string  `json:"kind"`
-	Name      string  `json:"name"`
-	Quantity  float64 `json:"quantity"`
-	Unit      string  `json:"unit"`
-	UnitPrice float64 `json:"unit_price"`
-	Percent   float64 `json:"percent"`
+	MaterialID string  `json:"material_id"`
+	Type       string  `json:"type"`
+	Kind       string  `json:"kind"`
+	Name       string  `json:"name"`
+	Quantity   float64 `json:"quantity"`
+	Unit       string  `json:"unit"`
+	UnitPrice  float64 `json:"unit_price"`
+	Percent    float64 `json:"percent"`
 }
 
 // CostPreset รายการต้นทุนที่ใช้บ่อย (เช่น เส้น PLA กรัมละ 0.45, ค่าเครื่องชั่วโมงละ 6) ไว้เลือกซ้ำในหน้าคำนวณต้นทุน
@@ -101,6 +109,9 @@ func (item CostItemRequest) validate() string {
 	}
 	if item.Percent < 0 || item.Percent > percentMax {
 		return "cost_percent_invalid"
+	}
+	if item.MaterialID != "" && (item.Kind != "fixed" || !utils.IsUUID(item.MaterialID)) {
+		return "cost_material_invalid"
 	}
 	return ""
 }

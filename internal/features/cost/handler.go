@@ -59,6 +59,10 @@ func (h *Handler) Save(c *gin.Context) {
 		return
 	}
 
+	req.Items, err = h.repo.ResolveMaterials(c.Request.Context(), productID, req.Items)
+	if writeRepoError(c, err) {
+		return
+	}
 	amounts := itemAmounts(req.Items)
 	sheet, err := h.repo.Save(c.Request.Context(), productID, req, amounts, costPrice(req.Items, amounts, req.BatchQuantity))
 	if writeRepoError(c, err) {
@@ -150,6 +154,8 @@ func writeRepoError(c *gin.Context, err error) bool {
 		helpers.WriteError(c, http.StatusNotFound, "product_not_found")
 	case errors.Is(err, ErrPresetNotFound):
 		helpers.WriteError(c, http.StatusNotFound, "cost_preset_not_found")
+	case errors.Is(err, ErrMaterialInvalid):
+		helpers.WriteError(c, http.StatusBadRequest, "cost_material_invalid")
 	default:
 		helpers.ServerError(c, err)
 	}

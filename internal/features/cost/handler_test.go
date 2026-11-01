@@ -54,6 +54,23 @@ func (f *fakeRepository) Save(ctx context.Context, productID string, req CostShe
 	return sheet, nil
 }
 
+// ResolveMaterials วัสดุปลอม: plaID = เส้น PLA กรัมละ 0.45 (มีในสต็อก) นอกนั้นไม่มีจริง
+func (f *fakeRepository) ResolveMaterials(ctx context.Context, productID string, items []CostItemRequest) ([]CostItemRequest, error) {
+	resolved := make([]CostItemRequest, len(items))
+	for i, item := range items {
+		resolved[i] = item
+		if item.MaterialID == "" {
+			continue
+		}
+		if item.MaterialID != plaID || item.MaterialID == productID {
+			return nil, ErrMaterialInvalid
+		}
+		resolved[i].Unit = "กรัม"
+		resolved[i].UnitPrice = 0.45
+	}
+	return resolved, nil
+}
+
 func (f *fakeRepository) ListPresets(ctx context.Context) ([]CostPreset, error) {
 	return f.presets, f.err
 }
@@ -214,5 +231,55 @@ func TestHandler_Presets(t *testing.T) {
 				t.Errorf("status = %d, ต้องได้ %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestHandler_Save_Material(t *testing.T) {
+	repo := &fakeRepository{sheet: CostSheet{ProductID: coffeeID}}
+	// ส่งราคา 999 มา แต่บรรทัดที่ผูกวัสดุต้องใช้ต้นทุนของวัสดุ (0.45 / กรัม) → 40 กรัม = 18
+	body := `{"batch_quantity":1,"sell_price":250,"items":[` +
+		`{"material_id":"` + plaID + `","type":"material","kind":"fixed","name":"เส้น PLA","quantity":40,"unit":"ชิ้น","unit_price":999},` +
+		`{"type":"labor","kind":"fixed","name":"งานมือ","quantity":10,"unit":"นาที","unit_price":1}]}`
+	rec := sendRequest(newTestRouter(repo), http.MethodPut, "/api/v1/products/"+coffeeID+"/costs", body)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, ต้องได้ 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(repo.savedAmounts) != 2 || repo.savedAmounts[0] != 18 || repo.savedCostPrice != 28 {
+		t.Errorf("amounts = %v ต้นทุน = %v, ต้องได้ [18 10] ต้นทุน 28 (ใช้ราคาวัสดุ ไม่ใช้ราคาที่ส่งมา)", repo.savedAmounts, repo.savedCostPrice)
+	}
+}
+
+func TestHandler_Save_MaterialInvalid(t *testing.T) {
+	tests := []struct {
+		name       string
+		materialID string
+		kind       string
+		want       string
+	}{
+		{"วัสดุไม่มีจริง ได้ 400", missingID, "fixed", "cost_material_invalid"},
+		{"เลือกตัวเองเป็นวัสดุ ได้ 400", coffeeID, "fixed", "cost_material_invalid"},
+		{"บรรทัด % ผูกวัสดุไม่ได้", plaID, "percent", "cost_material_invalid"},
+		{"material_id ไม่ใช่ UUID ได้ 400", "abc", "fixed", "cost_material_invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeRepository{sheet: CostSheet{ProductID: coffeeID}}
+			body := `{"batch_quantity":1,"sell_price":250,"items":[{"material_id":"` + tt.materialID +
+				`","type":"material","kind":"` + tt.kind + `","name":"วัสดุ","quantity":1,"unit_price":1,"percent":10}]}`
+			rec := sendRequest(newTestRouter(repo), http.MethodPut, "/api/v1/products/"+coffeeID+"/costs", body)
+			checkError(t, rec, http.StatusBadRequest, tt.want)
+		})
+	}
+}
+
+func checkError(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantError string) {
+	t.Helper()
+	if rec.Code != wantStatus {
+		t.Errorf("status = %d, ต้องได้ %d", rec.Code, wantStatus)
+	}
+	if want := `{"error":"` + wantError + `"}`; rec.Body.String() != want {
+		t.Errorf("body = %s, ต้องได้ %s", rec.Body.String(), want)
 	}
 }

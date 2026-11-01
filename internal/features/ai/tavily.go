@@ -28,12 +28,13 @@ type WebSearcher interface {
 }
 
 // SearchQuery การค้น 1 ครั้ง: Sites = ค้นเฉพาะเว็บเหล่านี้ (ว่าง = ทุกเว็บ), PreferSites = เน้นเว็บเหล่านี้แต่เว็บอื่นก็ได้,
-// Recent = เฉพาะข้อมูล 1 เดือนล่าสุด (ราคาของสดเปลี่ยนเร็ว ข่าวเก่าใช้ไม่ได้)
+// ExcludeSites = ไม่เอาผลจากเว็บเหล่านี้, Recent = เฉพาะข้อมูล 1 เดือนล่าสุด (ราคาของสดเปลี่ยนเร็ว ข่าวเก่าใช้ไม่ได้)
 type SearchQuery struct {
-	Text        string
-	Sites       []string
-	PreferSites bool
-	Recent      bool
+	Text         string
+	Sites        []string
+	PreferSites  bool
+	ExcludeSites []string
+	Recent       bool
 }
 
 // SearchResult ผลค้นหา 1 หน้าเว็บ content = ข้อความส่วนที่ตรงกับคำค้น / Source = ป้ายบอกแหล่ง (ใส่ตอนรวมผล ไม่ได้มาจาก Tavily)
@@ -82,6 +83,9 @@ func (t *tavilyClient) Search(ctx context.Context, query SearchQuery) ([]SearchR
 	}
 	if len(query.Sites) > 0 && query.PreferSites {
 		request["include_domains_mode"] = "prefer"
+	}
+	if len(query.ExcludeSites) > 0 {
+		request["exclude_domains"] = query.ExcludeSites
 	}
 	if query.Recent {
 		request["time_range"] = "month"

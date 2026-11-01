@@ -27,11 +27,15 @@ func (f *fakeSearcher) Search(ctx context.Context, query SearchQuery) ([]SearchR
 	return f.results, f.err
 }
 
-// searched คำค้น@เว็บ ของทุกครั้งที่ค้น ไว้เทียบใน test
+// searched คำค้น@เว็บ ของทุกครั้งที่ค้น ไว้เทียบใน test (ว่าง = ทั้งเว็บไทย, -เว็บ = ไม่เอาเว็บนั้น)
 func (f *fakeSearcher) searched() string {
 	parts := []string{}
 	for _, q := range f.queries {
-		parts = append(parts, q.Text+"@"+strings.Join(q.Sites, "+"))
+		part := q.Text + "@" + strings.Join(q.Sites, "+")
+		if len(q.ExcludeSites) > 0 {
+			part += "-" + strings.Join(q.ExcludeSites, "-")
+		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, " | ")
 }
@@ -62,9 +66,9 @@ func TestGeminiSearchResearch_QueriesThenSearchThenReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "พวงกุญแจ 3D@shopee.co.th | พวงกุญแจ 3D@lazada.co.th | เส้น PLA@shopee.co.th | เส้น PLA@lazada.co.th"
+	want := "พวงกุญแจ 3D@-shopee.co.th-lazada.co.th | พวงกุญแจ 3D@shopee.co.th | พวงกุญแจ 3D@lazada.co.th | เส้น PLA@"
 	if searcher.searched() != want {
-		t.Errorf("ร้านออนไลน์ต้องค้น Shopee + Lazada แยกกัน คำค้นไม่ซ้ำ ไม่ว่าง ได้ %s", searcher.searched())
+		t.Errorf("คำแรกค้นทั้งเว็บไทย + Shopee + Lazada / คำถัดไปทั้งเว็บไทย / คำค้นไม่ซ้ำ ไม่ว่าง ได้ %s", searcher.searched())
 	}
 	if report.RetailTypical != 229 || len(report.Sources) != 1 || report.Sources[0].URL != shopeeShop {
 		t.Errorf("ต้องได้ผลจาก Gemini + แหล่งที่มาเฉพาะลิงก์ที่ค้นเจอจริง ได้ %+v", report)
@@ -77,7 +81,7 @@ func TestGeminiSearchResearch_QueriesThenSearchThenReport(t *testing.T) {
 		t.Error("ขั้นคิดคำค้นต้องให้ตอบเป็น JSON จากข้อมูลสินค้า")
 	}
 	input := writer.lastRequestJSON()
-	if !strings.Contains(input, "฿49") || !strings.Contains(input, "[Shopee] พวงกุญแจ 3D") || strings.Count(input, shopeeShop) != 2 {
+	if !strings.Contains(input, "฿49") || !strings.Contains(input, "["+thaiShopsLabel+"] พวงกุญแจ 3D") || strings.Count(input, shopeeShop) != 2 {
 		t.Errorf("ขั้นสุดท้ายต้องได้ข้อความจากหน้าเว็บ + ป้ายแหล่ง + ลิงก์ (ผลซ้ำเหลือหน้าละครั้ง: ในผลค้นหา 1 + รายการลิงก์ 1) ได้ %s", input)
 	}
 }
@@ -132,8 +136,26 @@ func TestTavilyClient_Search(t *testing.T) {
 	if gotBody["query"] != "พวงกุญแจ 3D ราคา" || gotBody["search_depth"] != "basic" || gotBody["country"] != "thailand" || gotBody["api_key"] != nil {
 		t.Errorf("body ผิด (ต้องค้นแบบ basic = 1 เครดิต, เน้นไทย, ไม่ใส่ key ใน body) ได้ %v", gotBody)
 	}
-	if gotBody["include_domains"] != nil || gotBody["time_range"] != nil {
+	if gotBody["include_domains"] != nil || gotBody["exclude_domains"] != nil || gotBody["time_range"] != nil {
 		t.Errorf("ไม่กำหนดเว็บ = ค้นทุกเว็บ ได้ %v", gotBody)
+	}
+}
+
+func TestTavilyClient_SearchExcludeSites(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		json.Unmarshal(data, &gotBody)
+		w.Write([]byte(`{"results":[]}`))
+	}))
+	defer server.Close()
+
+	client := NewTavily("tvly-test").(*tavilyClient)
+	client.baseURL = server.URL
+	_, err := client.Search(context.Background(), SearchQuery{Text: "x", ExcludeSites: []string{"shopee.co.th", "lazada.co.th"}})
+	excluded, _ := gotBody["exclude_domains"].([]any)
+	if err != nil || len(excluded) != 2 || excluded[0] != "shopee.co.th" || gotBody["include_domains"] != nil {
+		t.Errorf("ต้องส่ง exclude_domains ไม่ส่ง include_domains ได้ %v %v", gotBody, err)
 	}
 }
 

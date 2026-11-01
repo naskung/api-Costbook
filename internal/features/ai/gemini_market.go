@@ -61,7 +61,7 @@ func geminiResearch(ctx context.Context, search, writer Gemini, prompt string) (
 }
 
 // geminiSearchResearch เช็คราคาตลาดด้วย Gemini ฟรี + ค้นเว็บเอง (Tavily ฟรี 1,000 ครั้ง/เดือน) — Gemini ฟรีค้น Google ไม่ได้
-//  1. writer คิดคำค้น 2–3 คำ + เลือกแหล่ง: ร้านออนไลน์ (Shopee + Lazada) หรือตลาดกลาง (ของสด)
+//  1. writer คิดคำค้น 2–3 คำ + เลือกแหล่ง: ร้านค้าในไทย (ทั้งเว็บไทย + Shopee / Lazada) หรือตลาดกลาง (ของสด)
 //  2. searcher ค้นตาม searchPlan (ครั้งละ 1 เครดิต ไม่เกิน maxSearches) รวมผลที่ไม่ซ้ำ พร้อมป้ายบอกแหล่ง
 //  3. writer จัดผลค้นหาเป็นผลเช็คราคาตลาด — แหล่งที่มาเฉพาะลิงก์ที่ค้นเจอจริง
 func geminiSearchResearch(ctx context.Context, searcher WebSearcher, writer Gemini, prompt string) (MarketReport, error) {

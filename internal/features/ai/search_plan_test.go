@@ -9,14 +9,23 @@ func TestSearchPlan(t *testing.T) {
 	plan := searchPlan([]plannedQuery{
 		{Text: "พวงกุญแจ 3D", Source: searchMarketplace},
 		{Text: "ราคาหมูเนื้อแดง", Source: searchCentralMarket},
+		{Text: "เส้น PLA", Source: searchMarketplace},
 	})
-	if len(plan) != 3 {
-		t.Fatalf("ร้านออนไลน์ 2 ครั้ง (Shopee + Lazada) + ตลาดกลาง 1 ครั้ง ได้ %d ครั้ง", len(plan))
+	if len(plan) != 5 {
+		t.Fatalf("คำแรก 3 ครั้ง (ทั้งเว็บไทย + Shopee + Lazada) + ตลาดกลาง 1 + คำถัดไปทั้งเว็บไทย 1 ได้ %d ครั้ง", len(plan))
 	}
-	if plan[0].label != "Shopee" || plan[0].query.Sites[0] != "shopee.co.th" || plan[1].label != "Lazada" || plan[1].query.Sites[0] != "lazada.co.th" {
-		t.Errorf("ร้านออนไลน์ต้องค้นแยก Shopee / Lazada ได้ %+v", plan[:2])
+	thaiWeb := plan[0].query
+	if plan[0].label != thaiShopsLabel || len(thaiWeb.Sites) != 0 || strings.Join(thaiWeb.ExcludeSites, ",") != "shopee.co.th,lazada.co.th" {
+		t.Errorf("คำแรกต้องค้นทั้งเว็บไทย ไม่เอา Shopee / Lazada (ค้นแยกแล้ว) ได้ %+v", plan[0])
 	}
-	central := plan[2]
+	if plan[1].label != "Shopee" || plan[1].query.Sites[0] != "shopee.co.th" || plan[2].label != "Lazada" || plan[2].query.Sites[0] != "lazada.co.th" {
+		t.Errorf("คำแรกต้องค้นแยก Shopee / Lazada ด้วย ได้ %+v", plan[1:3])
+	}
+	last := plan[4]
+	if last.label != thaiShopsLabel || last.query.Text != "เส้น PLA" || len(last.query.Sites) != 0 || len(last.query.ExcludeSites) != 0 {
+		t.Errorf("คำถัดไปค้นทั้งเว็บไทยครั้งเดียว (รวม Shopee / Lazada) ได้ %+v", last)
+	}
+	central := plan[3]
 	if central.label != centralMarketLabel || !central.query.PreferSites || !central.query.Recent || !strings.Contains(strings.Join(central.query.Sites, ","), "talaadthai.com") {
 		t.Errorf("ของสดต้องค้นตลาดกลาง เน้นเว็บทางการ ข้อมูลล่าสุด ได้ %+v", central)
 	}

@@ -25,13 +25,14 @@ const (
 )
 
 // fakeRepository ฐานข้อมูลปลอม ใช้แทน Postgres ตอน test
-// createErr / cancelErr ใช้จำลอง error ของ DB เช่น ของไม่พอ ร้านไม่มีเลขภาษี
+// createErr / cancelErr / deliveryErr ใช้จำลอง error ของ DB เช่น ของไม่พอ ร้านไม่มีเลขภาษี ใบยกเลิกไปแล้ว
 type fakeRepository struct {
 	invoice       Invoice
 	gotMonthStart string
 	gotPage       [2]int
 	createErr     error
 	cancelErr     error
+	deliveryErr   error
 	err           error
 }
 
@@ -69,6 +70,15 @@ func (f *fakeRepository) Cancel(ctx context.Context, id string) (Invoice, error)
 	}
 	inv, err := f.FindByID(ctx, id)
 	inv.Status = "cancelled"
+	return inv, err
+}
+
+func (f *fakeRepository) UpdateDelivery(ctx context.Context, id, deliveryStatus string) (Invoice, error) {
+	if f.deliveryErr != nil {
+		return Invoice{}, f.deliveryErr
+	}
+	inv, err := f.FindByID(ctx, id)
+	inv.DeliveryStatus = deliveryStatus
 	return inv, err
 }
 
@@ -235,6 +245,49 @@ func TestHandler_Cancel(t *testing.T) {
 				t.Errorf("status ของใบ = %q, ต้องได้ %q", got.Status, tt.wantStatusText)
 			}
 		})
+	}
+}
+
+func TestHandler_UpdateDelivery(t *testing.T) {
+	tests := []struct {
+		name         string
+		id           string
+		body         string
+		deliveryErr  error
+		wantStatus   int
+		wantResponse string
+	}{
+		{"เปลี่ยนเป็นส่งแล้ว ได้ 200", invoiceID, `{"delivery_status":"shipped"}`, nil, http.StatusOK, ""},
+		{"สถานะที่ไม่มี ได้ 400", invoiceID, `{"delivery_status":"lost"}`, nil, http.StatusBadRequest, `{"error":"invoice_delivery_status_invalid"}`},
+		{"ไม่ส่งสถานะมา ได้ 400", invoiceID, `{}`, nil, http.StatusBadRequest, `{"error":"invoice_delivery_status_invalid"}`},
+		{"JSON ผิด ได้ 400", invoiceID, `{`, nil, http.StatusBadRequest, `{"error":"invalid_json"}`},
+		{"ใบยกเลิกแล้ว ได้ 409", invoiceID, `{"delivery_status":"received"}`, ErrAlreadyCancelled, http.StatusConflict, `{"error":"invoice_already_cancelled"}`},
+		{"ไม่มีใบนี้ ได้ 404", missingID, `{"delivery_status":"received"}`, nil, http.StatusNotFound, `{"error":"invoice_not_found"}`},
+		{"id ไม่ใช่ UUID ได้ 404", "abc", `{"delivery_status":"received"}`, nil, http.StatusNotFound, `{"error":"invoice_not_found"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := issuedRepo()
+			repo.deliveryErr = tt.deliveryErr
+			rec := sendRequest(newTestRouter(repo), http.MethodPut, "/api/v1/invoices/"+tt.id+"/delivery", tt.body)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, ต้องได้ %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.wantResponse != "" && rec.Body.String() != tt.wantResponse {
+				t.Errorf("body = %s, ต้องได้ %s", rec.Body.String(), tt.wantResponse)
+			}
+		})
+	}
+}
+
+func TestHandler_UpdateDelivery_ReturnsNewStatus(t *testing.T) {
+	rec := sendRequest(newTestRouter(issuedRepo()), http.MethodPut, "/api/v1/invoices/"+invoiceID+"/delivery", `{"delivery_status":"shipped"}`)
+
+	var got Invoice
+	json.NewDecoder(rec.Body).Decode(&got)
+	if got.DeliveryStatus != deliveryShipped {
+		t.Errorf("delivery_status = %q, ต้องได้ %q", got.DeliveryStatus, deliveryShipped)
 	}
 }
 

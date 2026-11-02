@@ -41,6 +41,7 @@ func (f *fakeRepository) Update(ctx context.Context, req CompanyRequest) (Compan
 		VATRegistered:    valueOr(req.VATRegistered, f.company.VATRegistered),
 		PricesIncludeVAT: valueOr(req.PricesIncludeVAT, f.company.PricesIncludeVAT),
 		UseCostPage:      valueOr(req.UseCostPage, f.company.UseCostPage),
+		TrackDelivery:    valueOr(req.TrackDelivery, f.company.TrackDelivery),
 	}
 	return f.company, nil
 }
@@ -171,7 +172,7 @@ func TestHandler_Update(t *testing.T) {
 
 func TestHandler_Update_ShopSettings(t *testing.T) {
 	repo := &fakeRepository{}
-	body := `{"name":"ร้านของชำ","vat_registered":false,"prices_include_vat":true,"use_cost_page":false}`
+	body := `{"name":"ร้านของชำ","vat_registered":false,"prices_include_vat":true,"use_cost_page":false,"track_delivery":true}`
 
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/company", strings.NewReader(body))
 	rec := sendRequest(newTestRouter(repo), req, true)
@@ -181,21 +182,21 @@ func TestHandler_Update_ShopSettings(t *testing.T) {
 	}
 	var got Company
 	json.NewDecoder(rec.Body).Decode(&got)
-	if got.VATRegistered || !got.PricesIncludeVAT || got.UseCostPage {
-		t.Errorf("ได้ %+v, ต้องได้ vat_registered false, prices_include_vat true, use_cost_page false", got)
+	if got.VATRegistered || !got.PricesIncludeVAT || got.UseCostPage || !got.TrackDelivery {
+		t.Errorf("ได้ %+v, ต้องได้ vat_registered false, prices_include_vat true, use_cost_page false, track_delivery true", got)
 	}
 }
 
 func TestHandler_Update_KeepsShopSettings(t *testing.T) {
-	repo := &fakeRepository{company: Company{Name: "ร้านเดิม", VATRegistered: true, UseCostPage: true}}
+	repo := &fakeRepository{company: Company{Name: "ร้านเดิม", VATRegistered: true, UseCostPage: true, TrackDelivery: true}}
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/company", strings.NewReader(`{"name":"ร้านใหม่"}`))
 
 	rec := sendRequest(newTestRouter(repo), req, true)
 
 	var got Company
 	json.NewDecoder(rec.Body).Decode(&got)
-	if !got.VATRegistered || !got.UseCostPage || got.Name != "ร้านใหม่" {
-		t.Errorf("ได้ %+v, ไม่ส่งรูปแบบร้านมา ต้องใช้ค่าเดิม (vat_registered true, use_cost_page true)", got)
+	if !got.VATRegistered || !got.UseCostPage || !got.TrackDelivery || got.Name != "ร้านใหม่" {
+		t.Errorf("ได้ %+v, ไม่ส่งรูปแบบร้านมา ต้องใช้ค่าเดิม (vat_registered, use_cost_page, track_delivery true)", got)
 	}
 }
 

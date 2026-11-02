@@ -84,6 +84,7 @@ func (t toolbox) shopInfo(ctx context.Context) (string, *Action, error) {
 		"vat_registered":     shop.VATRegistered,
 		"prices_include_vat": shop.PricesIncludeVAT,
 		"use_cost_page":      shop.UseCostPage,
+		"track_delivery":     shop.TrackDelivery,
 		"product_fields":     fields,
 		"product_categories": categories,
 	})

@@ -12,6 +12,13 @@ const (
 	docReceipt    = "receipt"     // ใบเสร็จรับเงิน (ร้านไม่จด VAT)
 )
 
+// สถานะการส่งสินค้า (ใช้เมื่อร้านเปิดติดตามการส่งในหน้าตั้งค่า)
+const (
+	deliveryPending  = "pending"  // รอส่ง
+	deliveryShipped  = "shipped"  // ส่งแล้ว
+	deliveryReceived = "received" // ลูกค้าได้รับแล้ว
+)
+
 // money ยอดเงินของเอกสาร 1 ใบ
 type money struct {
 	itemsTotal float64 // รวมราคาสินค้า
@@ -27,6 +34,19 @@ func docTypeFor(vatRegistered bool) string {
 		return docTaxInvoice
 	}
 	return docReceipt
+}
+
+// deliveryStatusFor สถานะการส่งของใบใหม่: ร้านติดตามการส่ง → รอส่ง / ไม่ติดตาม → ถือว่าลูกค้าได้ของไปเลย
+func deliveryStatusFor(trackDelivery bool) string {
+	if trackDelivery {
+		return deliveryPending
+	}
+	return deliveryReceived
+}
+
+// isDeliveryStatus เช็คว่าเป็นสถานะการส่งที่ใช้ได้
+func isDeliveryStatus(status string) bool {
+	return status == deliveryPending || status == deliveryShipped || status == deliveryReceived
 }
 
 // docPrefix ตัวนำหน้าเลขที่เอกสาร: ใบกำกับ = INV, ใบเสร็จ = RC

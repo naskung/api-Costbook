@@ -6,6 +6,7 @@ import "github.com/naskung/api-Costbook/internal/utils"
 // doc_type: tax_invoice = ใบกำกับภาษี (ร้านจด VAT), receipt = ใบเสร็จรับเงิน (ร้านไม่จด VAT ไม่มี VAT)
 // ข้อมูลผู้ขาย / ผู้ซื้อ / ชื่อสินค้า เป็นค่า ณ วันที่ออก แก้ข้อมูลร้านหรือสินค้าทีหลัง ใบนี้ไม่เปลี่ยน
 // status: issued = ออกแล้ว, cancelled = ยกเลิกแล้ว
+// delivery_status: pending = รอส่ง, shipped = ส่งแล้ว, received = ลูกค้าได้รับแล้ว (ร้านไม่ได้ติดตามการส่ง = received เสมอ)
 // เงิน: items_total = รวมราคาสินค้า, discount = ส่วนลดทั้งบิล, subtotal = มูลค่าก่อน VAT, vat, total = ยอดสุทธิ
 // prices_include_vat = true → ราคาในบรรทัดเป็นราคารวม VAT แล้ว
 type Invoice struct {
@@ -14,6 +15,7 @@ type Invoice struct {
 	InvoiceNo        string        `json:"invoice_no"`
 	IssueDate        string        `json:"issue_date"`
 	Status           string        `json:"status"`
+	DeliveryStatus   string        `json:"delivery_status"`
 	SellerName       string        `json:"seller_name"`
 	SellerAddress    string        `json:"seller_address"`
 	SellerTaxID      string        `json:"seller_tax_id"`
@@ -46,13 +48,14 @@ type InvoiceItem struct {
 
 // InvoiceSummary ข้อมูลย่อของเอกสาร ใช้ในหน้ารายการ
 type InvoiceSummary struct {
-	ID           string  `json:"id"`
-	DocType      string  `json:"doc_type"`
-	InvoiceNo    string  `json:"invoice_no"`
-	IssueDate    string  `json:"issue_date"`
-	Status       string  `json:"status"`
-	CustomerName string  `json:"customer_name"`
-	Total        float64 `json:"total"`
+	ID             string  `json:"id"`
+	DocType        string  `json:"doc_type"`
+	InvoiceNo      string  `json:"invoice_no"`
+	IssueDate      string  `json:"issue_date"`
+	Status         string  `json:"status"`
+	DeliveryStatus string  `json:"delivery_status"`
+	CustomerName   string  `json:"customer_name"`
+	Total          float64 `json:"total"`
 }
 
 // InvoiceRequest ข้อมูลที่รับมาตอนออกเอกสาร
@@ -93,6 +96,19 @@ func (req InvoiceRequest) Validate() string {
 	}
 	if req.Discount < 0 || req.Discount > itemsTotal(req.Items) {
 		return "invoice_discount_invalid"
+	}
+	return ""
+}
+
+// DeliveryRequest ข้อมูลที่รับมาตอนเปลี่ยนสถานะการส่งสินค้า
+type DeliveryRequest struct {
+	DeliveryStatus string `json:"delivery_status"`
+}
+
+// Validate เช็คข้อมูลก่อนบันทึก คืน error code ("" = ผ่าน)
+func (req DeliveryRequest) Validate() string {
+	if !isDeliveryStatus(req.DeliveryStatus) {
+		return "invoice_delivery_status_invalid"
 	}
 	return ""
 }

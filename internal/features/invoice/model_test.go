@@ -52,3 +52,12 @@ func TestInvoiceRequest_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestDeliveryRequest_Validate(t *testing.T) {
+	if got := (DeliveryRequest{DeliveryStatus: "received"}).Validate(); got != "" {
+		t.Errorf("received ต้องผ่าน ได้ %q", got)
+	}
+	if got := (DeliveryRequest{DeliveryStatus: "lost"}).Validate(); got != "invoice_delivery_status_invalid" {
+		t.Errorf("สถานะที่ไม่มี ต้องได้ invoice_delivery_status_invalid ได้ %q", got)
+	}
+}

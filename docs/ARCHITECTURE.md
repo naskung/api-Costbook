@@ -172,7 +172,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `month_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `cost_material_invalid` (วัสดุที่ผูกไม่มีจริง / เป็นสินค้าตัวเอง / บรรทัดแบบ %), `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid`, `product_image_required`, `product_image_too_large`, `product_image_type_invalid`, `ai_key_format_invalid`, `ai_key_invalid` (ตอนบันทึก key แล้ว Anthropic ไม่รับ) |
 | 401 | ยังไม่ login / token ผิดหรือหมดอายุ / login ไม่ผ่าน | `unauthorized`, `invalid_credentials` |
 | 404 | ไม่เจอข้อมูล / ไม่มี path นี้ / id ไม่ใช่ UUID | `product_not_found`, `transaction_not_found`, `invoice_not_found`, `logo_not_found`, `product_image_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
-| 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `material_not_enough` (ตอบ field เพิ่ม `material` / `unit` / `need` / `have` ให้หน้าเว็บโชว์), `product_not_for_sale`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled`, `company_tax_id_required`, `ai_search_unavailable` (AI ฟรีค้นเว็บไม่ได้ → เช็คราคาตลาดไม่ได้) |
+| 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `material_not_enough` (ตอบ field เพิ่ม `material` / `unit` / `need` / `have` ให้หน้าเว็บโชว์), `product_not_for_sale`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled` (ยกเลิกซ้ำ / เปลี่ยนสถานะการส่งของใบที่ยกเลิกแล้ว), `company_tax_id_required`, `ai_search_unavailable` (AI ฟรีค้นเว็บไม่ได้ → เช็คราคาตลาดไม่ได้) |
 | 422 | AI ปฏิเสธคำขอ (นโยบายความปลอดภัย) | `ai_refused` |
 | 500 | server พัง | `server_error` (ใช้ `helpers.ServerError` → error จริงลง log ไม่ส่งให้ client) |
 | 502 | AI ตอบไม่ครบ / เรียก Claude ไม่สำเร็จ | `ai_no_result`, `ai_error` (รายละเอียดลง log) |
@@ -232,6 +232,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `GET /api/v1/invoices/{id}` | เอกสาร 1 ใบ (Flutter เอาไปสร้าง PDF) |
 | | `POST /api/v1/invoices` | ออกเอกสารขาย — ร้านจด VAT ได้ใบกำกับภาษี ไม่จด ได้ใบเสร็จ |
 | | `POST /api/v1/invoices/{id}/cancel` | ยกเลิกเอกสาร |
+| | `PUT /api/v1/invoices/{id}/delivery` | เปลี่ยนสถานะการส่งสินค้า `{"delivery_status": "pending" / "shipped" / "received"}` |
 | dashboard ✅ | `GET /api/v1/dashboard?month=2026-10` | ตัวเลขสรุปหน้าแรก + ยอดขายรายวัน / ย้อนหลัง 6 เดือน / กำไรขั้นต้น / ขายดี / ตามหมวด / มูลค่าสต็อก / เทียบราคาตลาด |
 | ai ✅ | `GET /api/v1/ai/status` | ตอนนี้ใช้ AI ตัวไหน (Claude / Gemini ฟรี / ไม่มี) ค้นเว็บได้ไหม ร้านใส่ key เองไหม |
 | | `PUT /api/v1/ai/key` | ร้านใส่ key ของ Claude เอง (ลอง key กับ Anthropic ก่อน แล้วเก็บแบบเข้ารหัส) |
@@ -422,6 +423,7 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 - `discount` = ส่วนลดทั้งบิล (0 ถึงยอดรวมสินค้า ไม่งั้น 400 `invoice_discount_invalid`) — `unit_price` รวม VAT หรือไม่ ดูจาก `company.prices_include_vat` (เก็บค่านี้ไว้ในใบด้วย)
 - ตอบใบเต็ม (เหมือน `GET /invoices/{id}`): `items_total`, `discount`, `subtotal` (มูลค่าก่อน VAT), `vat`, `total`
 - ยกเลิกเอกสาร: ได้ใบที่ `status = cancelled`, ยกเลิกซ้ำได้ 409 `invoice_already_cancelled`
+- สถานะการส่งสินค้า (`delivery_status`, migration `000015`): `pending` รอส่ง / `shipped` ส่งแล้ว / `received` ลูกค้าได้รับแล้ว — ใบใหม่ได้ค่าตาม `company.track_delivery`, ใบเก่าก่อนมีระบบนี้ = `received` / `PUT /invoices/{id}/delivery` เปลี่ยนไปสถานะไหนก็ได้ (ย้อนได้ เผื่อกดผิด) ได้ใบเต็มกลับมา, สถานะที่ไม่มี 400 `invoice_delivery_status_invalid`, ใบที่ยกเลิกแล้ว 409 `invoice_already_cancelled` — แก้ได้อย่างเดียวในเอกสารขาย ไม่กระทบเงิน / สต็อก
 - dashboard: รายได้ / รายจ่าย / กำไรสุทธิของเดือน (คิดแบบเดียวกับ `/transactions/summary`), จำนวน + ยอดใบกำกับที่ยังไม่ยกเลิก, จำนวนสินค้า, สินค้าใกล้หมด (ไม่เกิน 5 ตัว เหลือน้อยสุดก่อน)
 
 ### รายละเอียด company (ทำแล้ว)
@@ -444,8 +446,9 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | `vat_registered` | `true` | `true` ออกใบกำกับภาษี คิด VAT 7% / `false` ออกใบเสร็จรับเงิน ไม่คิด VAT ไม่ต้องมีเลขผู้เสียภาษี |
 | `prices_include_vat` | `false` | `true` = ราคาขายที่ตั้งไว้รวม VAT แล้ว (ราคาหน้าร้าน) → ถอด VAT ออกจากยอด / `false` = บวก VAT เพิ่มจากราคา |
 | `use_cost_page` | `true` | Flutter ซ่อนเมนูคำนวณต้นทุน (ร้านซื้อมาขายไปใช้ `unit_cost` ตอนรับเข้าแทน) — API ไม่ได้ใช้ค่านี้ |
+| `track_delivery` | `false` | `true` = ติดตามการส่งสินค้า: เอกสารใหม่ `delivery_status = pending` (รอส่ง) แล้วผู้ใช้กดเปลี่ยนเป็น `shipped` / `received` / `false` = เอกสารใหม่เป็น `received` เลย (ลูกค้าได้ของทันที) |
 
-- `PUT /company` **ไม่ส่ง** 3 ช่องนี้มา = ใช้ค่าเดิม (Go ใช้ `*bool`, `nil` → SQL `COALESCE($n, column)`)
+- `PUT /company` **ไม่ส่ง** 4 ช่องนี้มา = ใช้ค่าเดิม (Go ใช้ `*bool`, `nil` → SQL `COALESCE($n, column)`)
 - ช่องข้อมูลเพิ่มเติม (`/product-fields`): `{ "name", "type", "options", "show_in_list", "sort_order" }`
   - `type` = `text` / `number` / `date` / `select` (`select` ต้องมี `options` ไม่งั้น 400 `field_options_required`)
   - ค่าของแต่ละสินค้าเก็บใน `products.custom_fields` (JSONB) แบบ `{"<id ช่อง>": "ค่า"}` — **ไม่ต้อง ALTER TABLE** เพิ่ม column ทุกครั้งที่ร้านอยากได้ช่องใหม่
@@ -458,13 +461,13 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 
 | ตาราง | เก็บอะไร | column หลัก |
 |---|---|---|
-| `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type, vat_registered, prices_include_vat, use_cost_page (`000007`), ai_key (key ของ Claude แบบเข้ารหัส ว่าง = ไม่มี `000009_ai_key`) |
+| `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type, vat_registered, prices_include_vat, use_cost_page (`000007`), track_delivery (`000015`), ai_key (key ของ Claude แบบเข้ารหัส ว่าง = ไม่มี `000009_ai_key`) |
 | `products` | สินค้า (migration `000003_create_products`) | id, code (ห้ามซ้ำถ้าไม่ว่าง), name, category_id (→ `product_categories`, ลบหมวด = `NULL`, `000011` — เดิมเป็นข้อความ `category`), description, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0), track_stock, for_sale (false = วัสดุ `000012`), custom_fields (`JSONB`), image (`BYTEA` ว่างได้) + image_content_type + image_version (`000010`) |
 | `product_categories` | หมวดหมู่สินค้า (`000011_product_categories`, ชื่อห้ามซ้ำ `lower(btrim(name))`) | id, name |
 | `product_fields` | ช่องข้อมูลเพิ่มเติมที่ร้านตั้งเอง (`000007_flexible_shop`) | id, name, type (text / number / date / select), options (`TEXT[]`), show_in_list, sort_order |
 | `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), kind (fixed / percent), name, quantity, unit, unit_price, percent, amount, material_id (→ `products` วัสดุ ห้ามเป็นตัวเอง ลบวัสดุ = `NULL` `000012`) |
 | `cost_presets` | รายการต้นทุนที่ใช้บ่อย (`000007`) | id, type, kind, name, unit, unit_price, percent |
-| `invoices` | เอกสารขาย (`000004_create_invoices`) | id, doc_type (tax_invoice / receipt), invoice_no (ห้ามซ้ำ), issue_date, status (issued / cancelled), seller_* + customer_* ณ วันที่ออก, note, prices_include_vat, items_total, discount, subtotal, vat, total, cancelled_at |
+| `invoices` | เอกสารขาย (`000004_create_invoices`) | id, doc_type (tax_invoice / receipt), invoice_no (ห้ามซ้ำ), issue_date, status (issued / cancelled), delivery_status (pending / shipped / received `000015`), seller_* + customer_* ณ วันที่ออก, note, prices_include_vat, items_total, discount, subtotal, vat, total, cancelled_at |
 | `invoice_items` | รายการในเอกสาร (`000004`, สินค้าที่อยู่ในนี้ลบไม่ได้) | id, invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount, stock_cut (ตัด stock ไปไหม → ยกเลิกใบคืนเฉพาะที่ตัด), cost_price (ต้นทุน ณ วันที่ขาย `000008`) |
 | `invoice_numbers` | ตัวรันเลขที่ (`000004`) | doc_type + year (คู่กันเป็น key), last_number |
 | `market_checks` | ผลเช็คราคาตลาดด้วย AI (`000008_ai_market`, ลบสินค้า → ลบด้วย) | id, product_id, our_cost_price, our_sell_price, retail_low / high / typical, wholesale_low / high / note, market_cost, suggested_price, confidence (low / medium / high), summary, advice, cost_items (`JSONB`), sources (`JSONB`), created_at |

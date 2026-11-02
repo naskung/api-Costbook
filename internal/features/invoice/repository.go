@@ -29,6 +29,7 @@ type Repository interface {
 	FindByID(ctx context.Context, id string) (Invoice, error)
 	Create(ctx context.Context, req InvoiceRequest) (Invoice, error)
 	Cancel(ctx context.Context, id string) (Invoice, error)
+	UpdateDelivery(ctx context.Context, id, deliveryStatus string) (Invoice, error)
 }
 
 type PostgresRepository struct {
@@ -41,14 +42,14 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 
 // seller ข้อมูลร้าน ณ ตอนออกใบ (copy ไปเก็บในเอกสาร) + รูปแบบร้าน
 type seller struct {
-	name, address, taxID, branch, phone string
-	vatRegistered, pricesIncludeVAT     bool
+	name, address, taxID, branch, phone            string
+	vatRegistered, pricesIncludeVAT, trackDelivery bool
 }
 
 // List ล่าสุดก่อน / id ต่อท้ายให้ลำดับตายตัว (โหลดทีละหน้าไม่ซ้ำ ไม่ข้าม) / LIMIT NULL = ไม่จำกัด
 func (r *PostgresRepository) List(ctx context.Context, monthStart string, limit, offset int) ([]InvoiceSummary, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, doc_type, invoice_no, issue_date::text, status, customer_name, total
+		SELECT id, doc_type, invoice_no, issue_date::text, status, delivery_status, customer_name, total
 		FROM invoices
 		WHERE issue_date >= $1::date AND issue_date < $1::date + interval '1 month'
 		ORDER BY issue_date DESC, invoice_no DESC, id
@@ -61,7 +62,7 @@ func (r *PostgresRepository) List(ctx context.Context, monthStart string, limit,
 	invoices := []InvoiceSummary{} // ไม่ใช้ nil → JSON จะได้ [] แทน null
 	for rows.Next() {
 		var s InvoiceSummary
-		err := rows.Scan(&s.ID, &s.DocType, &s.InvoiceNo, &s.IssueDate, &s.Status, &s.CustomerName, &s.Total)
+		err := rows.Scan(&s.ID, &s.DocType, &s.InvoiceNo, &s.IssueDate, &s.Status, &s.DeliveryStatus, &s.CustomerName, &s.Total)
 		if err != nil {
 			return nil, err
 		}
@@ -73,13 +74,13 @@ func (r *PostgresRepository) List(ctx context.Context, monthStart string, limit,
 func (r *PostgresRepository) FindByID(ctx context.Context, id string) (Invoice, error) {
 	var inv Invoice
 	err := r.db.QueryRow(ctx, `
-		SELECT id, doc_type, invoice_no, issue_date::text, status,
+		SELECT id, doc_type, invoice_no, issue_date::text, status, delivery_status,
 			seller_name, seller_address, seller_tax_id, seller_branch, seller_phone,
 			customer_name, customer_address, customer_tax_id, customer_branch,
 			note, prices_include_vat, items_total, discount, subtotal, vat, total
 		FROM invoices
 		WHERE id = $1`, id).
-		Scan(&inv.ID, &inv.DocType, &inv.InvoiceNo, &inv.IssueDate, &inv.Status,
+		Scan(&inv.ID, &inv.DocType, &inv.InvoiceNo, &inv.IssueDate, &inv.Status, &inv.DeliveryStatus,
 			&inv.SellerName, &inv.SellerAddress, &inv.SellerTaxID, &inv.SellerBranch, &inv.SellerPhone,
 			&inv.CustomerName, &inv.CustomerAddress, &inv.CustomerTaxID, &inv.CustomerBranch,
 			&inv.Note, &inv.PricesIncludeVAT, &inv.ItemsTotal, &inv.Discount, &inv.Subtotal, &inv.VAT, &inv.Total)
@@ -184,14 +185,28 @@ func (r *PostgresRepository) Cancel(ctx context.Context, id string) (Invoice, er
 	return r.FindByID(ctx, id)
 }
 
+// UpdateDelivery เปลี่ยนสถานะการส่งสินค้า (ใบที่ยกเลิกแล้วเปลี่ยนไม่ได้)
+func (r *PostgresRepository) UpdateDelivery(ctx context.Context, id, deliveryStatus string) (Invoice, error) {
+	result, err := r.db.Exec(ctx, `
+		UPDATE invoices SET delivery_status = $2, updated_at = now()
+		WHERE id = $1 AND status = 'issued'`, id, deliveryStatus)
+	if err != nil {
+		return Invoice{}, err
+	}
+	if result.RowsAffected() == 0 {
+		return Invoice{}, r.notFoundOrCancelled(ctx, id)
+	}
+	return r.FindByID(ctx, id)
+}
+
 // sellerInfo อ่านข้อมูลร้าน + รูปแบบร้าน (ยังไม่ได้ตั้งค่าร้านเลย = ออกเอกสารไม่ได้)
 func sellerInfo(ctx context.Context, tx pgx.Tx) (seller, error) {
 	var s seller
 	err := tx.QueryRow(ctx, `
-		SELECT name, address, tax_id, branch, phone, vat_registered, prices_include_vat
+		SELECT name, address, tax_id, branch, phone, vat_registered, prices_include_vat, track_delivery
 		FROM company
 		WHERE id = 1`).
-		Scan(&s.name, &s.address, &s.taxID, &s.branch, &s.phone, &s.vatRegistered, &s.pricesIncludeVAT)
+		Scan(&s.name, &s.address, &s.taxID, &s.branch, &s.phone, &s.vatRegistered, &s.pricesIncludeVAT, &s.trackDelivery)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return seller{}, ErrSellerTaxIDMissing
 	}
@@ -213,13 +228,13 @@ func nextInvoiceNo(ctx context.Context, tx pgx.Tx, docType, issueDate string) (s
 func insertInvoice(ctx context.Context, tx pgx.Tx, req InvoiceRequest, shop seller, docType, invoiceNo string, m money) (string, error) {
 	var id string
 	err := tx.QueryRow(ctx, `
-		INSERT INTO invoices (doc_type, invoice_no, issue_date,
+		INSERT INTO invoices (doc_type, invoice_no, issue_date, delivery_status,
 			seller_name, seller_address, seller_tax_id, seller_branch, seller_phone,
 			customer_name, customer_address, customer_tax_id, customer_branch,
 			note, prices_include_vat, items_total, discount, subtotal, vat, total)
-		VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		RETURNING id`,
-		docType, invoiceNo, req.IssueDate,
+		docType, invoiceNo, req.IssueDate, deliveryStatusFor(shop.trackDelivery),
 		shop.name, shop.address, shop.taxID, shop.branch, shop.phone,
 		req.CustomerName, req.CustomerAddress, req.CustomerTaxID, req.CustomerBranch,
 		req.Note, shop.pricesIncludeVAT && docType == docTaxInvoice, m.itemsTotal, m.discount, m.subtotal, m.vat, m.total).

@@ -18,12 +18,13 @@ func NewHandler(repo Repository) *Handler {
 }
 
 // RegisterRoutes ต่อ route ของเอกสารขาย (ใบกำกับภาษี / ใบเสร็จรับเงิน) เข้ากับกลุ่ม /api/v1 (ทุก route ต้อง login)
-// ไม่มี PUT / DELETE เพราะเอกสารขายแก้ / ลบไม่ได้ ผิดให้ยกเลิกแล้วออกใบใหม่
+// เอกสารขายแก้ / ลบไม่ได้ ผิดให้ยกเลิกแล้วออกใบใหม่ — แก้ได้อย่างเดียวคือสถานะการส่งสินค้า
 func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) {
 	api.GET("/invoices", authRequired, h.List)
 	api.GET("/invoices/:id", authRequired, h.Get)
 	api.POST("/invoices", authRequired, h.Create)
 	api.POST("/invoices/:id/cancel", authRequired, h.Cancel)
+	api.PUT("/invoices/:id/delivery", authRequired, h.UpdateDelivery)
 }
 
 // List GET /api/v1/invoices?month=2026-10&limit=20&offset=0 (ไม่ส่ง month = เดือนนี้ / ไม่ส่ง limit = ทั้งเดือน)
@@ -89,6 +90,31 @@ func (h *Handler) Cancel(c *gin.Context) {
 	}
 
 	invoice, err := h.repo.Cancel(c.Request.Context(), id)
+	if writeRepoError(c, err) {
+		return
+	}
+	c.JSON(http.StatusOK, invoice)
+}
+
+// UpdateDelivery PUT /api/v1/invoices/:id/delivery ส่ง {"delivery_status": "shipped"}
+func (h *Handler) UpdateDelivery(c *gin.Context) {
+	id, ok := helpers.UUIDParam(c, "id", "invoice_not_found")
+	if !ok {
+		return
+	}
+	var req DeliveryRequest
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
+		helpers.WriteError(c, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	code := req.Validate()
+	if code != "" {
+		helpers.WriteError(c, http.StatusBadRequest, code)
+		return
+	}
+
+	invoice, err := h.repo.UpdateDelivery(c.Request.Context(), id, req.DeliveryStatus)
 	if writeRepoError(c, err) {
 		return
 	}

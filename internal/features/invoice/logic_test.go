@@ -11,6 +11,28 @@ func TestDocTypeFor(t *testing.T) {
 	}
 }
 
+func TestDeliveryStatusFor(t *testing.T) {
+	if got := deliveryStatusFor(true); got != deliveryPending {
+		t.Errorf("ร้านติดตามการส่ง ใบใหม่ได้ %q, ต้องได้ %q", got, deliveryPending)
+	}
+	if got := deliveryStatusFor(false); got != deliveryReceived {
+		t.Errorf("ร้านไม่ติดตามการส่ง ใบใหม่ได้ %q, ต้องได้ %q", got, deliveryReceived)
+	}
+}
+
+func TestIsDeliveryStatus(t *testing.T) {
+	for _, status := range []string{deliveryPending, deliveryShipped, deliveryReceived} {
+		if !isDeliveryStatus(status) {
+			t.Errorf("%q ต้องเป็นสถานะที่ใช้ได้", status)
+		}
+	}
+	for _, status := range []string{"", "lost", "Shipped"} {
+		if isDeliveryStatus(status) {
+			t.Errorf("%q ต้องใช้ไม่ได้", status)
+		}
+	}
+}
+
 func TestInvoiceNumber(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -34,7 +34,7 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 
 func (r *PostgresRepository) Get(ctx context.Context) (Company, error) {
 	row := r.db.QueryRow(ctx, `
-		SELECT name, address, tax_id, branch, phone, logo IS NOT NULL, vat_registered, prices_include_vat, use_cost_page
+		SELECT name, address, tax_id, branch, phone, logo IS NOT NULL, vat_registered, prices_include_vat, use_cost_page, track_delivery
 		FROM company
 		WHERE id = 1`)
 	return scanCompany(row)
@@ -48,10 +48,11 @@ func (r *PostgresRepository) Update(ctx context.Context, req CompanyRequest) (Co
 			vat_registered = COALESCE($6, vat_registered),
 			prices_include_vat = COALESCE($7, prices_include_vat),
 			use_cost_page = COALESCE($8, use_cost_page),
+			track_delivery = COALESCE($9, track_delivery),
 			updated_at = now()
 		WHERE id = 1
-		RETURNING name, address, tax_id, branch, phone, logo IS NOT NULL, vat_registered, prices_include_vat, use_cost_page`,
-		req.Name, req.Address, req.TaxID, req.Branch, req.Phone, req.VATRegistered, req.PricesIncludeVAT, req.UseCostPage)
+		RETURNING name, address, tax_id, branch, phone, logo IS NOT NULL, vat_registered, prices_include_vat, use_cost_page, track_delivery`,
+		req.Name, req.Address, req.TaxID, req.Branch, req.Phone, req.VATRegistered, req.PricesIncludeVAT, req.UseCostPage, req.TrackDelivery)
 	return scanCompany(row)
 }
 
@@ -73,7 +74,7 @@ func (r *PostgresRepository) SaveLogo(ctx context.Context, logo Logo) (Company, 
 		UPDATE company
 		SET logo = $1, logo_content_type = $2, updated_at = now()
 		WHERE id = 1
-		RETURNING name, address, tax_id, branch, phone, logo IS NOT NULL, vat_registered, prices_include_vat, use_cost_page`,
+		RETURNING name, address, tax_id, branch, phone, logo IS NOT NULL, vat_registered, prices_include_vat, use_cost_page, track_delivery`,
 		logo.Data, logo.ContentType)
 	return scanCompany(row)
 }
@@ -90,7 +91,7 @@ func (r *PostgresRepository) DeleteLogo(ctx context.Context) error {
 func scanCompany(row pgx.Row) (Company, error) {
 	var c Company
 	err := row.Scan(&c.Name, &c.Address, &c.TaxID, &c.Branch, &c.Phone, &c.HasLogo,
-		&c.VATRegistered, &c.PricesIncludeVAT, &c.UseCostPage)
+		&c.VATRegistered, &c.PricesIncludeVAT, &c.UseCostPage, &c.TrackDelivery)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Company{}, ErrCompanyMissing
 	}

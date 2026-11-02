@@ -445,7 +445,7 @@ paths:
     put:
       tags: [company]
       summary: แก้ข้อมูลร้าน
-      description: ข้อความส่งมาครบทุกช่อง ช่องที่ไม่ส่งจะกลายเป็นค่าว่าง — รูปแบบร้าน (vat_registered, prices_include_vat, use_cost_page) ไม่ส่งมา = ใช้ค่าเดิม
+      description: ข้อความส่งมาครบทุกช่อง ช่องที่ไม่ส่งจะกลายเป็นค่าว่าง — รูปแบบร้าน (vat_registered, prices_include_vat, use_cost_page, track_delivery) ไม่ส่งมา = ใช้ค่าเดิม
       operationId: updateCompany
       security:
         - bearerAuth: []
@@ -1660,6 +1660,58 @@ paths:
         "500":
           $ref: "#/components/responses/ServerError"
 
+  /invoices/{id}/delivery:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    put:
+      tags: [invoice]
+      summary: เปลี่ยนสถานะการส่งสินค้า (รอส่ง / ส่งแล้ว / ได้รับแล้ว)
+      description: ใช้กับร้านที่เปิด track_delivery ในข้อมูลร้าน — เปลี่ยนไปสถานะไหนก็ได้ (ย้อนกลับได้ เผื่อกดผิด) / ใบที่ยกเลิกแล้วเปลี่ยนไม่ได้
+      operationId: updateInvoiceDelivery
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delivery_status]
+              properties:
+                delivery_status:
+                  type: string
+                  enum: [pending, shipped, received]
+            example: { delivery_status: shipped }
+      responses:
+        "200":
+          description: เปลี่ยนแล้ว ได้ใบทั้งใบกลับมา
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+        "400":
+          description: JSON ผิด / สถานะที่ไม่มี
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalidJson: { value: { error: invalid_json } }
+                statusInvalid: { value: { error: invoice_delivery_status_invalid } }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/InvoiceNotFound"
+        "409":
+          description: ใบนี้ยกเลิกไปแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: invoice_already_cancelled }
+        "500":
+          $ref: "#/components/responses/ServerError"
+
   /dashboard:
     get:
       tags: [dashboard]
@@ -2323,7 +2375,7 @@ components:
 
     Company:
       type: object
-      required: [name, address, tax_id, branch, phone, has_logo, vat_registered, prices_include_vat, use_cost_page]
+      required: [name, address, tax_id, branch, phone, has_logo, vat_registered, prices_include_vat, use_cost_page, track_delivery]
       properties:
         name:
           type: string
@@ -2357,6 +2409,10 @@ components:
           type: boolean
           description: true = ใช้หน้าคำนวณต้นทุน (ร้านผลิตเอง) / false = ซ่อนเมนู (ร้านซื้อมาขายไป)
           example: true
+        track_delivery:
+          type: boolean
+          description: true = เอกสารขายมีสถานะการส่งสินค้า (ใบใหม่เริ่มที่รอส่ง) / false = ไม่ติดตาม (ใบใหม่ = ได้รับแล้ว)
+          example: false
 
     CompanyRequest:
       type: object
@@ -2392,6 +2448,10 @@ components:
           type: boolean
           description: true = ใช้หน้าคำนวณต้นทุน / false = ซ่อนเมนู (ไม่ส่งมา = ใช้ค่าเดิม)
           example: true
+        track_delivery:
+          type: boolean
+          description: true = ติดตามการส่งสินค้าของเอกสารขาย (ไม่ส่งมา = ใช้ค่าเดิม)
+          example: false
 
     ProductCounts:
       type: object
@@ -2991,7 +3051,7 @@ components:
 
     InvoiceSummary:
       type: object
-      required: [id, doc_type, invoice_no, issue_date, status, customer_name, total]
+      required: [id, doc_type, invoice_no, issue_date, status, delivery_status, customer_name, total]
       properties:
         id:
           type: string
@@ -3010,6 +3070,10 @@ components:
         status:
           type: string
           enum: [issued, cancelled]
+        delivery_status:
+          type: string
+          enum: [pending, shipped, received]
+          description: สถานะการส่งสินค้า pending = รอส่ง, shipped = ส่งแล้ว, received = ลูกค้าได้รับแล้ว (ร้านไม่ได้ติดตามการส่ง = received เสมอ)
         customer_name:
           type: string
           example: บริษัท ลูกค้า จำกัด
@@ -3019,7 +3083,7 @@ components:
 
     Invoice:
       type: object
-      required: [id, doc_type, invoice_no, issue_date, status, seller_name, seller_address, seller_tax_id, seller_branch, seller_phone,
+      required: [id, doc_type, invoice_no, issue_date, status, delivery_status, seller_name, seller_address, seller_tax_id, seller_branch, seller_phone,
         customer_name, customer_address, customer_tax_id, customer_branch, note, prices_include_vat, items_total, discount,
         subtotal, vat, total, items]
       properties:
@@ -3040,6 +3104,10 @@ components:
         status:
           type: string
           enum: [issued, cancelled]
+        delivery_status:
+          type: string
+          enum: [pending, shipped, received]
+          description: สถานะการส่งสินค้า pending = รอส่ง, shipped = ส่งแล้ว, received = ลูกค้าได้รับแล้ว (ร้านไม่ได้ติดตามการส่ง = received เสมอ)
         seller_name:
           type: string
           description: ข้อมูลผู้ขาย ณ วันที่ออกใบ

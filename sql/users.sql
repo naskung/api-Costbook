@@ -34,7 +34,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- เพิ่มผู้ใช้ 1 คน — crypt(..., gen_salt('bf', 10)) = เข้ารหัสแบบ bcrypt เหมือนที่ API ใช้ จึง login ผ่าน API ได้
 -- อีเมลใช้ตัวพิมพ์เล็กทั้งหมด
 INSERT INTO users (email, password_hash, first_name, last_name)
-VALUES ('somchai@example.com', crypt('1234', gen_salt('bf', 10)), 'สมชาย', 'ใจดี')
+VALUES ('somchai@example.com', crypt('1234', gen_salt('bf', 10)), 'admin', 'admin')
 RETURNING id, email, first_name, last_name, created_at;
 
 -- เช็คว่ารหัสผ่านถูกไหม (password_ok = true แปลว่าถูก)

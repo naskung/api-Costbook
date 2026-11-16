@@ -24,7 +24,7 @@ type toolError string
 func (e toolError) Error() string { return string(e) }
 
 // toolbox ทำงานตามเครื่องมือที่ AI เรียกในแชท
-// canSearch = AI ที่ใช้อยู่ค้นเว็บได้ไหม (Claude ได้เสมอ / Gemini ได้เมื่อมี TAVILY_API_KEY หรือเปิด GEMINI_WEB_SEARCH, ไม่ได้ → เสนอเช็คราคาตลาดไม่ได้)
+// canSearch = AI ที่ใช้อยู่ค้นเว็บได้ไหม (Claude ได้เสมอ / Gemini ได้เมื่อมี TAVILY_API_KEY หรือเปิด GEMINI_WEB_SEARCH / AI แบบ OpenAI ได้เมื่อมี TAVILY_API_KEY, ไม่ได้ → เสนอเช็คราคาตลาดไม่ได้)
 type toolbox struct {
 	shop      ShopReader
 	repo      Repository

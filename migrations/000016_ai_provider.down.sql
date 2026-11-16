@@ -1,0 +1,3 @@
+ALTER TABLE company DROP COLUMN IF EXISTS ai_model;
+ALTER TABLE company DROP COLUMN IF EXISTS ai_base_url;
+ALTER TABLE company DROP COLUMN IF EXISTS ai_provider;

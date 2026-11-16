@@ -5,7 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
@@ -29,6 +29,7 @@ type Handler struct {
 	now       func() time.Time
 	newClaude func(apiKey string) Claude
 	newGemini func(apiKey, model string) Gemini
+	newOpenAI func(baseURL, apiKey, model string) OpenAI
 	// newSearcher ตัวค้นเว็บของ Gemini ฟรี (Tavily) — test เปลี่ยนเป็นตัวปลอมได้
 	newSearcher func(apiKey string) WebSearcher
 }
@@ -36,7 +37,7 @@ type Handler struct {
 func NewHandler(repo Repository, shop ShopReader, cfg Config) *Handler {
 	return &Handler{
 		repo: repo, shop: shop, cfg: cfg, now: time.Now,
-		newClaude: NewClaude, newGemini: NewGemini, newSearcher: NewTavily,
+		newClaude: NewClaude, newGemini: NewGemini, newOpenAI: NewOpenAI, newSearcher: NewTavily,
 	}
 }
 
@@ -45,6 +46,7 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 	api.GET("/ai/status", authRequired, h.Status)
 	api.PUT("/ai/key", authRequired, h.SaveKey)
 	api.DELETE("/ai/key", authRequired, h.DeleteKey)
+	api.POST("/ai/models", authRequired, h.Models)
 	api.POST("/ai/chat", authRequired, h.Chat)
 	api.GET("/products/:id/market", authRequired, h.GetMarketCheck)
 	api.POST("/products/:id/market", authRequired, h.CheckMarket)
@@ -52,14 +54,20 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 
 // current AI ที่ใช้อยู่ตอนนี้ + สถานะ (assistant = nil เมื่อยังไม่มี AI ให้ใช้)
 func (h *Handler) current(ctx context.Context) (Assistant, Status, error) {
-	savedKey, err := h.savedKey(ctx)
+	saved, err := h.savedAI(ctx)
 	if err != nil {
 		return nil, Status{}, err
 	}
-	status := pickProvider(savedKey, h.cfg)
+	status := pickProvider(saved, h.cfg)
 	switch {
+	case status.Provider == providerOpenAI:
+		assistant := openAIAssistant{client: h.newOpenAI(saved.BaseURL, saved.APIKey, saved.Model)}
+		if h.cfg.TavilyKey != "" {
+			assistant.searcher = h.newSearcher(h.cfg.TavilyKey)
+		}
+		return assistant, status, nil
 	case status.Provider == providerClaude && status.Source == sourceSettings:
-		return claudeAssistant{claude: h.newClaude(savedKey)}, status, nil
+		return claudeAssistant{claude: h.newClaude(saved.APIKey)}, status, nil
 	case status.Provider == providerClaude:
 		return claudeAssistant{claude: h.newClaude(h.cfg.ClaudeKey)}, status, nil
 	case status.Provider == providerGemini:
@@ -78,21 +86,25 @@ func (h *Handler) current(ctx context.Context) (Assistant, Status, error) {
 	return nil, status, nil
 }
 
-// savedKey key ที่ร้านใส่ไว้ (ถอดรหัสแล้ว) — ถอดไม่ได้ (เช่น เปลี่ยน JWT_SECRET) ถือว่าไม่มี ให้ร้านใส่ใหม่
-func (h *Handler) savedKey(ctx context.Context) (string, error) {
-	encrypted, err := h.repo.SavedClaudeKey(ctx)
-	if err != nil || encrypted == "" {
-		return "", err
+// savedAI AI ที่ร้านตั้งไว้ (ถอดรหัส key แล้ว) — ถอดไม่ได้ (เช่น เปลี่ยน JWT_SECRET) ถือว่ายังไม่ได้ตั้ง ให้ร้านตั้งใหม่
+func (h *Handler) savedAI(ctx context.Context) (aiSettings, error) {
+	saved, err := h.repo.SavedAI(ctx)
+	if err != nil || saved.Provider == "" {
+		return aiSettings{}, err
 	}
-	key, err := utils.Decrypt(encrypted, h.cfg.Secret)
+	settings := aiSettings{Provider: saved.Provider, BaseURL: saved.BaseURL, Model: saved.Model}
+	if saved.EncryptedKey == "" {
+		return settings, nil
+	}
+	settings.APIKey, err = utils.Decrypt(saved.EncryptedKey, h.cfg.Secret)
 	if err != nil {
-		slog.Warn("ถอดรหัส key ของ AI ไม่ได้ (เปลี่ยน JWT_SECRET?) ให้ใส่ key ใหม่ในหน้าตั้งค่า")
-		return "", nil
+		slog.Warn("ถอดรหัส key ของ AI ไม่ได้ (เปลี่ยน JWT_SECRET?) ให้ตั้ง AI ใหม่ในหน้าตั้งค่า")
+		return aiSettings{}, nil
 	}
-	return key, nil
+	return settings, nil
 }
 
-// Status GET /api/v1/ai/status — AI ที่ใช้อยู่ (Claude / Gemini ฟรี / ไม่มี) ค้นเว็บได้ไหม ใส่ key เองไว้ไหม
+// Status GET /api/v1/ai/status — AI ที่ใช้อยู่ (Claude / AI แบบ OpenAI / Gemini ฟรี / ไม่มี) ค้นเว็บได้ไหม ตั้งเองไว้ไหม
 func (h *Handler) Status(c *gin.Context) {
 	_, status, err := h.current(c.Request.Context())
 	if err != nil {
@@ -102,37 +114,37 @@ func (h *Handler) Status(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
-// SaveKey PUT /api/v1/ai/key {"api_key": "sk-ant-..."} — ลอง key กับ Claude ก่อน ใช้ได้จริงถึงเก็บ (เข้ารหัส)
+// SaveKey PUT /api/v1/ai/key — ร้านเลือก AI เอง ลองต่อจริงก่อน ใช้ได้ถึงเก็บ (key เข้ารหัส)
+//   - Claude: {"api_key": "sk-ant-..."} (provider ไม่ส่งก็ได้)
+//   - AI แบบ OpenAI: {"provider": "openai", "base_url": "https://api.deepseek.com/v1", "api_key": "...", "model": "deepseek-chat"}
 func (h *Handler) SaveKey(c *gin.Context) {
-	var req struct {
-		APIKey string `json:"api_key"`
-	}
+	var req SaveAIRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		helpers.WriteError(c, http.StatusBadRequest, "invalid_json")
 		return
 	}
-	key := strings.TrimSpace(req.APIKey)
-	if !validClaudeKey(key) {
-		helpers.WriteError(c, http.StatusBadRequest, "ai_key_format_invalid")
+	req = req.normalized()
+	if code := req.Validate(); code != "" {
+		helpers.WriteError(c, http.StatusBadRequest, code)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), keyCheckTimeout)
 	defer cancel()
-	err := h.newClaude(key).CheckKey(ctx)
-	var apiErr *anthropic.Error
-	if errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
-		helpers.WriteError(c, http.StatusBadRequest, "ai_key_invalid")
-		return
-	}
-	if err != nil {
-		writeAIError(c, err)
+	if !h.checkConnection(c, ctx, req) {
 		return
 	}
 
-	encrypted, err := utils.Encrypt(key, h.cfg.Secret)
+	saved := SavedAI{Provider: req.Provider, BaseURL: req.BaseURL, Model: req.Model}
+	if req.Provider == providerClaude {
+		saved.BaseURL, saved.Model = "", ""
+	}
+	var err error
+	if req.APIKey != "" {
+		saved.EncryptedKey, err = utils.Encrypt(req.APIKey, h.cfg.Secret)
+	}
 	if err == nil {
-		err = h.repo.SaveClaudeKey(c.Request.Context(), encrypted)
+		err = h.repo.SaveAI(c.Request.Context(), saved)
 	}
 	if err != nil {
 		helpers.ServerError(c, err)
@@ -141,9 +153,87 @@ func (h *Handler) SaveKey(c *gin.Context) {
 	h.Status(c)
 }
 
-// DeleteKey DELETE /api/v1/ai/key — ลบ key ที่ร้านใส่ไว้ กลับไปใช้ AI ฟรี (หรือ key ใน .env)
+// checkConnection ลองต่อ AI ที่ร้านเลือกจริง (ไม่เสียเงิน) — ใช้ไม่ได้ → ตอบ error แล้วคืน false
+func (h *Handler) checkConnection(c *gin.Context, ctx context.Context, req SaveAIRequest) bool {
+	if req.Provider == providerOpenAI {
+		return h.checkOpenAI(c, ctx, req)
+	}
+	return h.checkClaude(c, ctx, req.APIKey)
+}
+
+// checkClaude ลอง key กับ Claude (ขอรายชื่อรุ่น ไม่เสียเงิน) — ใช้ไม่ได้ → ตอบ error แล้วคืน false
+func (h *Handler) checkClaude(c *gin.Context, ctx context.Context, key string) bool {
+	err := h.newClaude(key).CheckKey(ctx)
+	var apiErr *anthropic.Error
+	if errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden) {
+		helpers.WriteError(c, http.StatusBadRequest, "ai_key_invalid")
+		return false
+	}
+	if err != nil {
+		writeAIError(c, err)
+		return false
+	}
+	return true
+}
+
+// checkOpenAI ลองต่อ AI แบบ OpenAI (GET /models ไม่เสียเงิน): ต่อได้ + key ถูก + มีรุ่นที่เลือก
+// บางเจ้าไม่มีรายชื่อรุ่นให้ (404) → ข้ามการเช็ครุ่น ไปรู้ตอนแชทแทน
+func (h *Handler) checkOpenAI(c *gin.Context, ctx context.Context, req SaveAIRequest) bool {
+	models, ok := h.listModels(c, ctx, req.BaseURL, req.APIKey)
+	if !ok {
+		return false
+	}
+	if len(models) > 0 && !slices.Contains(models, req.Model) {
+		helpers.WriteError(c, http.StatusBadRequest, "ai_model_not_found")
+		return false
+	}
+	return true
+}
+
+// listModels รายชื่อรุ่นของ AI แบบ OpenAI — ไม่มีรายชื่อให้ (404) = ว่าง / ต่อไม่ได้, key ผิด → ตอบ error แล้วคืน false
+func (h *Handler) listModels(c *gin.Context, ctx context.Context, baseURL, apiKey string) ([]string, bool) {
+	models, err := h.newOpenAI(baseURL, apiKey, "").Models(ctx)
+	var apiErr *OpenAIError
+	switch {
+	case err == nil:
+		slices.Sort(models)
+		return models, true
+	case errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound:
+		return []string{}, true
+	case errors.As(err, &apiErr) && (apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusForbidden):
+		helpers.WriteError(c, http.StatusBadRequest, "ai_key_invalid")
+	case errors.As(err, &apiErr), errors.Is(err, context.DeadlineExceeded):
+		writeAIError(c, err)
+	default:
+		writeAICode(c, http.StatusBadRequest, "ai_connect_failed", err.Error())
+	}
+	return nil, false
+}
+
+// Models POST /api/v1/ai/models {"base_url", "api_key"} — รายชื่อรุ่นของ AI แบบ OpenAI ไว้ให้ร้านเลือก (ไม่เสียเงิน)
+func (h *Handler) Models(c *gin.Context) {
+	var req SaveAIRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		helpers.WriteError(c, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	req = req.normalized()
+	if !validBaseURL(req.BaseURL) {
+		helpers.WriteError(c, http.StatusBadRequest, "ai_base_url_invalid")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), keyCheckTimeout)
+	defer cancel()
+	models, ok := h.listModels(c, ctx, req.BaseURL, req.APIKey)
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"models": models})
+}
+
+// DeleteKey DELETE /api/v1/ai/key — ลบ AI ที่ร้านตั้งไว้ กลับไปใช้ AI ฟรี (หรือ key ใน .env)
 func (h *Handler) DeleteKey(c *gin.Context) {
-	if err := h.repo.SaveClaudeKey(c.Request.Context(), ""); err != nil {
+	if err := h.repo.SaveAI(c.Request.Context(), SavedAI{}); err != nil {
 		helpers.ServerError(c, err)
 		return
 	}

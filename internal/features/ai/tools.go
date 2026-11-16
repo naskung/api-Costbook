@@ -129,7 +129,7 @@ func newStrictTool(name, description string, properties map[string]any) anthropi
 
 const reportToolName = "save_market_report"
 
-// reportProperties ช่องของผลเช็คราคาตลาด — Claude ส่งผ่าน reportTool, Gemini ตอบเป็น JSON ตาม geminiReportSchema
+// reportProperties ช่องของผลเช็คราคาตลาด — Claude ส่งผ่าน reportTool, Gemini / AI แบบ OpenAI ตอบเป็น JSON ตาม reportSchema
 var reportProperties = map[string]any{
 	"summary":        stringProp("สรุปภาพรวมราคาในตลาด 2–4 ประโยค"),
 	"retail_low":     numberProp("ราคาขายปลีกต่ำสุดที่เจอ"),
@@ -158,8 +158,8 @@ var reportProperties = map[string]any{
 // reportTool Claude เรียกตอนจบเพื่อส่งผลเป็นข้อมูลที่เก็บลง DB ได้เลย
 var reportTool = newStrictTool(reportToolName, "บันทึกผลสำรวจราคาตลาดของสินค้า เรียกครั้งเดียวตอนค้นเสร็จ ราคาเป็นบาทต่อหน่วยของร้าน 0 = ไม่รู้", reportProperties)
 
-// geminiReportSchema รูปแบบ JSON ที่ให้ Gemini ตอบผลเช็คราคาตลาด (ทุกช่องต้องมี)
-var geminiReportSchema = map[string]any{"type": "object", "properties": reportProperties, "required": keysOf(reportProperties)}
+// reportSchema รูปแบบ JSON ที่ให้ Gemini / AI แบบ OpenAI ตอบผลเช็คราคาตลาด (ทุกช่องต้องมี)
+var reportSchema = map[string]any{"type": "object", "properties": reportProperties, "required": keysOf(reportProperties)}
 
 // webSearchTool ค้นเว็บ (Anthropic ค้นให้) จำกัด 8 ครั้งต่องาน + บอกว่าอยู่ไทย ผลค้นหาจะเป็นของไทย
 var webSearchTool = anthropic.BetaToolUnionParam{OfWebSearchTool20260209: &anthropic.BetaWebSearchTool20260209Param{

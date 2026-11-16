@@ -169,7 +169,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 | status error | เมื่อไหร่ | ตัวอย่าง code |
 |---|---|---|
-| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `date_range_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `cost_material_invalid` (วัสดุที่ผูกไม่มีจริง / เป็นสินค้าตัวเอง / บรรทัดแบบ %), `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid`, `product_image_required`, `product_image_too_large`, `product_image_type_invalid`, `ai_key_format_invalid`, `ai_key_invalid` (ตอนบันทึก key แล้ว Anthropic ไม่รับ) |
+| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `date_range_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `cost_material_invalid` (วัสดุที่ผูกไม่มีจริง / เป็นสินค้าตัวเอง / บรรทัดแบบ %), `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid`, `product_image_required`, `product_image_too_large`, `product_image_type_invalid`, `ai_key_format_invalid`, `ai_key_invalid` (ตอนบันทึก key แล้ว AI ไม่รับ), `ai_provider_invalid`, `ai_base_url_invalid`, `ai_model_required`, `ai_model_not_found`, `ai_connect_failed` |
 | 401 | ยังไม่ login / token ผิดหรือหมดอายุ / login ไม่ผ่าน | `unauthorized`, `invalid_credentials` |
 | 404 | ไม่เจอข้อมูล / ไม่มี path นี้ / id ไม่ใช่ UUID | `product_not_found`, `transaction_not_found`, `invoice_not_found`, `logo_not_found`, `product_image_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
 | 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `material_not_enough` (ตอบ field เพิ่ม `material` / `unit` / `need` / `have` ให้หน้าเว็บโชว์), `product_not_for_sale`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled` (ยกเลิกซ้ำ / เปลี่ยนสถานะการส่งของใบที่ยกเลิกแล้ว), `company_tax_id_required`, `ai_search_unavailable` (AI ฟรีค้นเว็บไม่ได้ → เช็คราคาตลาดไม่ได้) |
@@ -359,9 +359,9 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 - เทียบราคาตลาด: ใช้ราคาที่ลูกค้าจ่าย (ร้านจด VAT ที่ตั้งราคาไม่รวม VAT → บวก VAT ก่อน) เทียบกับช่วงราคาปลีกจากการเช็คครั้งล่าสุด → `below` / `within` / `above` / `unknown`
 - % เทียบช่วงก่อน Flutter คิดเอง จาก `previous`
 
-**AI** (`features/ai`) มี 2 ตัว เลือกให้เองทุกคำขอ (`pickProvider` ใน `ai/assistant.go`) ตามลำดับ:
+**AI** (`features/ai`) มี 3 แบบ เลือกให้เองทุกคำขอ (`pickProvider` ใน `ai/assistant.go`) ตามลำดับ:
 
-1. key ของ Claude ที่ร้านใส่ในหน้าตั้งค่า (`company.ai_key` เข้ารหัสไว้)
+1. AI ที่ร้านตั้งในหน้าตั้งค่า (`company.ai_provider` + `ai_base_url` + `ai_model` + `ai_key` เข้ารหัส — migration `000016_ai_provider`): **Claude** หรือ **AI แบบ OpenAI** (ด้านล่าง)
 2. `ANTHROPIC_API_KEY` ใน `.env`
 3. `GEMINI_API_KEY` ใน `.env` → **Gemini ฟรี** (ค่าเริ่มต้นเมื่อร้านไม่มี key)
 4. ไม่มีเลย → ปิด AI (ตอบ 503 `ai_not_configured`) ส่วนอื่นใช้ได้ปกติ
@@ -389,9 +389,22 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
   - **กติกาของ Google** (Gemini API Additional Terms): ผลที่ค้นผ่าน Google ต้องแสดง Search Suggestions (`search_suggestions` ใน `market_checks`, migration `000013`) คู่กับผลเสมอ ห้ามแก้ไข / เก็บไว้ได้เพื่อให้ผู้ใช้คนเดิมดูประวัติของตัวเอง — **หน้าเว็บยังไม่ได้ทำส่วนแสดงนี้ ต้องทำก่อนเปิด `GEMINI_WEB_SEARCH`**
 - Gemini: เรียก `POST /models/{model}:generateContent` ด้วย Go standard library (ไม่เพิ่ม package), ส่งส่วนที่ AI ตอบกลับไปแบบเดิมทุกไบต์ (มี `thoughtSignature` ที่ Gemini ต้องได้คืน), คำตอบถูกบล็อก (SAFETY ฯลฯ) → 422 `ai_refused`
 
-**key ของร้าน** (`PUT` / `DELETE /ai/key`):
+**AI แบบ OpenAI** (`provider: "openai"`, `ai/openai.go`) — ผู้ใช้ขอ 2026-11-16 "เชื่อม AI ตัวไหนก็ได้ ไม่ใช่แค่ที่เรากำหนด":
 
-- ต้องขึ้นต้นด้วย `sk-ant-` ไม่มีช่องว่าง (`validClaudeKey`) ไม่ใช่ → 400 `ai_key_format_invalid`
+- ใช้ได้กับทุกเจ้าที่มี `POST {base_url}/chat/completions` แบบ OpenAI: OpenAI, DeepSeek, Groq, OpenRouter, Mistral, xAI, Together, Typhoon (AI ภาษาไทย), Gemini (`.../v1beta/openai`), Ollama ในเครื่อง (ไม่ต้องใส่ key) — ร้านตั้ง ที่อยู่ API + key + ชื่อรุ่น เอง (หน้าเว็บมีรายการเจ้าดัง ๆ ให้เลือก ใส่ที่อยู่ให้เอง)
+- เรียกด้วย Go standard library (ไม่เพิ่ม package) — key ทาง `Authorization: Bearer` (ไม่มี key = ไม่ส่ง header)
+- แชท: เครื่องมือชุดเดียวกัน (`openAITools` แปลง `toolSpec` เป็น `{"type":"function"}`) ส่งผลกลับเป็น `role: tool` + `tool_call_id` / ทำเครื่องมือด้วย `callTool` ตัวเดียวกับ Gemini / ตัด `<think>...</think>` ที่บางรุ่นส่งมาหน้าคำตอบ (`withoutThinking`)
+- เช็คราคาตลาด: ค้นเว็บผ่าน Tavily ขั้นตอนเดียวกับ Gemini ฟรี (`searchResearch` ใน `ai/market_search.go` รับ `jsonAsker` → `geminiAsker` / `openAIAsker`) — ไม่มี `TAVILY_API_KEY` → ค้นไม่ได้ (409 `ai_search_unavailable`) / ให้ตอบ JSON ด้วยการใส่ schema ในคำสั่ง (ไม่ใช้ `response_format` เพราะแต่ละเจ้ารองรับไม่เหมือนกัน) แล้วตัดเอาเฉพาะ `{...}` (`jsonObjectIn`)
+- `POST /ai/models` → `GET {base_url}/models` (ไม่เสียเงิน) รายชื่อรุ่นเรียงตามตัวอักษรให้หน้าเว็บเลือก / 404 (เจ้าที่ไม่มีรายชื่อ) = `[]`
+- error ตอนใช้งาน (`writeOpenAIError`): 401 / 403 → `ai_key_invalid`, 402 → `ai_credit_low`, 404 → `ai_model_not_found`, 429 → `ai_quota_exceeded`, 5xx → `ai_busy`, อื่น ๆ → log + 502 `ai_error` / ต่อไม่ได้ (เช่น Ollama ปิดอยู่) หรือที่อยู่ไม่ใช่ API แบบ OpenAI → 503 `ai_connect_failed`
+- ลองจริงแล้วกับ server ปลอมแบบ OpenAI ในเครื่อง: ดึงรายชื่อรุ่น / key ผิด / รุ่นไม่มี / ต่อไม่ได้ / บันทึก (key เข้ารหัสใน DB) / แชทเรียก `list_products` แล้วตอบ / ลบกลับเป็นค่าเดิม
+
+**AI ที่ร้านตั้ง** (`PUT` / `DELETE /ai/key`, body = `SaveAIRequest`):
+
+- `provider` ไม่ส่ง = `claude` (แอปเก่าที่ส่งแค่ `api_key` ใช้ได้เหมือนเดิม) / ไม่ใช่ `claude` / `openai` → 400 `ai_provider_invalid`
+- openai: `base_url` ต้องเป็น `http(s)://...` (ตัด `/` ท้ายให้) ไม่ใช่ → 400 `ai_base_url_invalid` / ไม่ใส่รุ่น → `ai_model_required` / ลองด้วย `GET /models`: key ผิด → `ai_key_invalid`, ไม่มีรุ่นที่เลือก → `ai_model_not_found`, ต่อไม่ได้ → `ai_connect_failed`, ไม่มีรายชื่อรุ่น (404) → ข้ามการเช็ครุ่น
+- ร้านใส่ที่อยู่ API อะไรก็ได้ (รวม `localhost` ไว้ใช้ Ollama) → server จะเรียกที่อยู่นั้นให้ — ทุก role ที่ login ตั้งได้ (เหมือนตั้งค่าร้านอื่น ๆ) ถ้าวันหลังเปิดให้คนนอกใช้ ควรจำกัดเฉพาะเจ้าของร้าน
+- Claude: ต้องขึ้นต้นด้วย `sk-ant-` ไม่มีช่องว่าง (`validClaudeKey`) ไม่ใช่ → 400 `ai_key_format_invalid`
 - ลอง key กับ Anthropic ก่อน (`Claude.CheckKey` → `Models.List` ไม่เสียเงิน) ไม่ผ่าน → 400 `ai_key_invalid` ไม่บันทึก — **key ที่เครดิตหมดยังผ่านขั้นนี้** (ขอรายชื่อรุ่นไม่ใช้เครดิต) จะรู้ตอนแชท / เช็คราคา → 503 `ai_credit_low`
 - เก็บแบบเข้ารหัส AES-256-GCM (`utils.Encrypt` / `Decrypt`, กุญแจ = SHA-256 ของ `JWT_SECRET`) — API ไม่ส่ง key กลับเลย ส่งแค่ 4 ตัวท้าย (`key_hint`) / `GET /company` ไม่มี `ai_key`
 - ถอดรหัสไม่ได้ (เช่น เปลี่ยน `JWT_SECRET`) → ลง log แล้วถือว่าไม่มี key (ร้านต้องใส่ใหม่) ไม่ทำให้ AI พัง

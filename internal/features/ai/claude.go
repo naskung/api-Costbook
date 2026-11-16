@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go/v2"
@@ -62,6 +63,8 @@ func writeAIError(c *gin.Context, err error) {
 	var apiErr *anthropic.Error
 	var geminiErr *GeminiError
 	var tavilyErr *TavilyError
+	var openAIErr *OpenAIError
+	var urlErr *url.Error
 	switch {
 	case errors.Is(err, ErrNoWebSearch):
 		writeAICode(c, http.StatusConflict, "ai_search_unavailable", err.Error())
@@ -69,6 +72,8 @@ func writeAIError(c *gin.Context, err error) {
 		writeGeminiError(c, geminiErr)
 	case errors.As(err, &tavilyErr):
 		writeTavilyError(c, tavilyErr)
+	case errors.As(err, &openAIErr):
+		writeOpenAIError(c, openAIErr)
 	case errors.Is(err, ErrRefused):
 		writeAICode(c, http.StatusUnprocessableEntity, "ai_refused", err.Error())
 	case errors.Is(err, ErrNoReport), errors.Is(err, ErrTooManySteps):
@@ -77,6 +82,8 @@ func writeAIError(c *gin.Context, err error) {
 		writeAICode(c, http.StatusGatewayTimeout, "ai_timeout", err.Error())
 	case errors.As(err, &apiErr):
 		writeClaudeAPIError(c, apiErr)
+	case errors.As(err, &urlErr), errors.Is(err, ErrNotOpenAIAPI):
+		writeAICode(c, http.StatusServiceUnavailable, "ai_connect_failed", err.Error())
 	default:
 		helpers.ServerError(c, err)
 	}
@@ -102,6 +109,26 @@ func writeGeminiError(c *gin.Context, err *GeminiError) {
 		writeAICode(c, http.StatusServiceUnavailable, "ai_busy", err.Error())
 	default:
 		slog.Error("เรียก Gemini ไม่สำเร็จ", "status", err.Status, "error", err.Message)
+		helpers.WriteError(c, http.StatusBadGateway, "ai_error")
+	}
+}
+
+// writeOpenAIError error ที่ AI แบบ OpenAI ตอบกลับมา
+// 401 / 403 = key ผิด, 402 = เครดิตหมด, 404 = ไม่มีรุ่นนี้ / ที่อยู่ผิด, 429 = โควตาเต็ม, 5xx = ไม่ว่าง, อื่น ๆ = log แล้วตอบ ai_error
+func writeOpenAIError(c *gin.Context, err *OpenAIError) {
+	switch {
+	case err.Status == http.StatusUnauthorized || err.Status == http.StatusForbidden:
+		writeAICode(c, http.StatusServiceUnavailable, "ai_key_invalid", err.Error())
+	case err.Status == http.StatusPaymentRequired:
+		writeAICode(c, http.StatusServiceUnavailable, "ai_credit_low", err.Error())
+	case err.Status == http.StatusNotFound:
+		writeAICode(c, http.StatusServiceUnavailable, "ai_model_not_found", err.Error())
+	case err.Status == http.StatusTooManyRequests:
+		writeAICode(c, http.StatusServiceUnavailable, "ai_quota_exceeded", err.Error())
+	case err.Status >= 500:
+		writeAICode(c, http.StatusServiceUnavailable, "ai_busy", err.Error())
+	default:
+		slog.Error("เรียก AI แบบ OpenAI ไม่สำเร็จ", "status", err.Status, "error", err.Message)
 		helpers.WriteError(c, http.StatusBadGateway, "ai_error")
 	}
 }

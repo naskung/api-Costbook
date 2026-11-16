@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.14.0
+  version: 0.15.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -1744,7 +1744,7 @@ paths:
     get:
       tags: [ai]
       summary: เปิดใช้ AI ได้ไหม
-      description: "enabled = false เมื่อยังไม่ได้ใส่ ANTHROPIC_API_KEY (ปุ่ม AI ในหน้าเว็บจะถูกปิด)"
+      description: "enabled = false เมื่อยังไม่มี AI ให้ใช้เลย (ร้านยังไม่ได้ตั้ง และไม่มี key ใน .env) — ปุ่ม AI ในหน้าเว็บจะถูกปิด"
       operationId: getAIStatus
       security:
         - bearerAuth: []
@@ -1761,8 +1761,14 @@ paths:
   /ai/key:
     put:
       tags: [ai]
-      summary: ใส่ key ของ Claude (ของร้าน)
-      description: "ลองใช้ key กับ Claude ก่อน (ไม่เสียค่า AI) ใช้ได้จริงถึงเก็บแบบเข้ารหัส — API ไม่ส่ง key กลับมาอีก (ได้แค่ 4 ตัวท้ายใน key_hint)"
+      summary: ร้านเลือก AI เอง (Claude หรือ AI เจ้าไหนก็ได้ที่ใช้รูปแบบ API ของ OpenAI)
+      description: |
+        ลองต่อ AI จริงก่อน (ไม่เสียค่า AI) ใช้ได้ถึงเก็บ — key เก็บแบบเข้ารหัส API ไม่ส่งกลับมาอีก (ได้แค่ 4 ตัวท้ายใน key_hint)
+        - **Claude:** `{"api_key": "sk-ant-..."}` (provider ไม่ส่ง = claude) — ลองด้วยการขอรายชื่อรุ่นของ Anthropic
+        - **AI แบบ OpenAI:** `{"provider": "openai", "base_url": "https://api.deepseek.com/v1", "api_key": "...", "model": "deepseek-chat"}`
+          ใช้ได้กับทุกเจ้าที่มี `POST {base_url}/chat/completions` เช่น OpenAI, DeepSeek, Groq, OpenRouter, Mistral, xAI, Together, Typhoon, Gemini, Ollama ในเครื่อง (ไม่ต้องใส่ key)
+          — ลองด้วย `GET {base_url}/models`: key ผิด → ai_key_invalid / ไม่มีรุ่นที่เลือก → ai_model_not_found / ต่อไม่ได้ → ai_connect_failed / เจ้าที่ไม่มีรายชื่อรุ่น (404) ข้ามการเช็ครุ่น
+          — เช็คราคาตลาดค้นเว็บผ่าน Tavily (ต้องมี TAVILY_API_KEY ใน .env)
       operationId: saveAIKey
       security:
         - bearerAuth: []
@@ -1771,10 +1777,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [api_key]
-              properties:
-                api_key: { type: string, example: "sk-ant-api03-..." }
+              $ref: "#/components/schemas/AISettingsRequest"
       responses:
         "200":
           description: บันทึกแล้ว ได้สถานะ AI ใหม่
@@ -1783,7 +1786,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AIStatus"
         "400":
-          description: "JSON พัง / รูปแบบ key ผิด (ai_key_format_invalid) / Claude บอกว่า key ใช้ไม่ได้ (ai_key_invalid)"
+          description: "JSON พัง / provider ไม่รู้จัก (ai_provider_invalid) / รูปแบบ key ผิด (ai_key_format_invalid) / ที่อยู่ API ผิด (ai_base_url_invalid) / ไม่ใส่รุ่น (ai_model_required) / key ใช้ไม่ได้ (ai_key_invalid) / ไม่มีรุ่นนี้ (ai_model_not_found) / ต่อที่อยู่นี้ไม่ได้ หรือไม่ใช่ API แบบ OpenAI (ai_connect_failed)"
           content:
             application/json:
               schema:
@@ -1795,7 +1798,7 @@ paths:
           $ref: "#/components/responses/AIUnavailable"
     delete:
       tags: [ai]
-      summary: ลบ key ของร้าน (กลับไปใช้ AI ฟรี)
+      summary: ลบ AI ที่ร้านตั้งไว้ (กลับไปใช้ AI ฟรี / key ใน .env)
       operationId: deleteAIKey
       security:
         - bearerAuth: []
@@ -1808,6 +1811,46 @@ paths:
                 $ref: "#/components/schemas/AIStatus"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /ai/models:
+    post:
+      tags: [ai]
+      summary: รายชื่อรุ่นของ AI แบบ OpenAI (ไว้ให้ร้านเลือกรุ่นก่อนบันทึก)
+      description: "เรียก GET {base_url}/models ให้ (ไม่เสียค่า AI) เรียงตามตัวอักษร — เจ้าที่ไม่มีรายชื่อรุ่น (404) ได้ [] ให้ร้านพิมพ์ชื่อรุ่นเอง"
+      operationId: listAIModels
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_url]
+              properties:
+                base_url: { type: string, example: "https://api.openai.com/v1" }
+                api_key: { type: string, description: ไม่ใส่ก็ได้ (เช่น Ollama) }
+      responses:
+        "200":
+          description: รายชื่อรุ่น
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models]
+                properties:
+                  models: { type: array, items: { type: string }, example: [deepseek-chat, deepseek-reasoner] }
+        "400":
+          description: "JSON พัง / ที่อยู่ API ผิด (ai_base_url_invalid) / key ใช้ไม่ได้ (ai_key_invalid) / ต่อไม่ได้ (ai_connect_failed)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: ai_connect_failed }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/AIUnavailable"
 
   /ai/chat:
     post:
@@ -2252,7 +2295,7 @@ components:
             $ref: "#/components/schemas/Error"
           example: { error: ai_no_result }
     AIUnavailable:
-      description: "ไม่มี AI ให้ใช้ (ai_not_configured) / API key ผิด (ai_key_invalid) / เครดิตของ key Claude หมด (ai_credit_low) / AI ไม่ว่าง ลองใหม่ทีหลัง (ai_busy) / โควตา AI ฟรีหมด (ai_quota_exceeded) / key ของตัวค้นเว็บ Tavily ผิด (search_key_invalid) / สิทธิ์ค้นเว็บฟรีของเดือนหมด (search_quota_exceeded)"
+      description: "ไม่มี AI ให้ใช้ (ai_not_configured) / API key ผิด (ai_key_invalid) / เครดิตของ key Claude หมด (ai_credit_low) / AI ไม่ว่าง ลองใหม่ทีหลัง (ai_busy) / โควตา AI หมด (ai_quota_exceeded) / ไม่มีรุ่นที่ตั้งไว้แล้ว (ai_model_not_found) / ต่อ AI ไม่ได้ เช่น Ollama ปิดอยู่ (ai_connect_failed) / key ของตัวค้นเว็บ Tavily ผิด (search_key_invalid) / สิทธิ์ค้นเว็บฟรีของเดือนหมด (search_quota_exceeded)"
       content:
         application/json:
           schema:
@@ -3421,16 +3464,26 @@ components:
 
     AIStatus:
       type: object
-      description: AI ที่ใช้อยู่ตอนนี้ (ลำดับ key ของร้าน → key Claude ใน .env → Gemini ฟรี) — ไม่มี key ตัวจริงในคำตอบ
+      description: AI ที่ใช้อยู่ตอนนี้ (ลำดับ AI ที่ร้านตั้ง → key Claude ใน .env → Gemini ฟรี) — ไม่มี key ตัวจริงในคำตอบ
       properties:
         enabled: { type: boolean, example: true }
-        provider: { type: string, enum: [claude, gemini, none] }
+        provider: { type: string, enum: [claude, openai, gemini, none], description: "openai = AI เจ้าไหนก็ได้ที่ใช้รูปแบบ API ของ OpenAI ที่ร้านตั้งเอง" }
         model: { type: string, example: claude-opus-5-5 }
+        base_url: { type: string, example: "https://api.deepseek.com/v1", description: ที่อยู่ API (เฉพาะ openai ไม่งั้นว่าง) }
         source: { type: string, enum: [settings, env, ""], description: "settings = ร้านใส่เอง, env = ไฟล์ .env" }
-        web_search: { type: boolean, description: "ค้นเว็บได้ไหม (เช็คราคาตลาดได้เฉพาะ true) — Claude ได้เสมอ / Gemini ได้เมื่อ API มี TAVILY_API_KEY (ค้นเว็บฟรี) หรือเปิด GEMINI_WEB_SEARCH=on (Gemini แบบเสียเงิน)" }
-        has_own_key: { type: boolean, description: ร้านใส่ key Claude เองไว้ไหม }
+        web_search: { type: boolean, description: "ค้นเว็บได้ไหม (เช็คราคาตลาดได้เฉพาะ true) — Claude ได้เสมอ / Gemini ได้เมื่อ API มี TAVILY_API_KEY (ค้นเว็บฟรี) หรือเปิด GEMINI_WEB_SEARCH=on (Gemini แบบเสียเงิน) / openai ได้เมื่อมี TAVILY_API_KEY" }
+        has_own_key: { type: boolean, description: ร้านตั้ง AI เองไว้ไหม (Claude หรือ openai) }
         key_hint: { type: string, example: "…a1B2", description: 4 ตัวท้ายของ key ที่ร้านใส่ }
         free_available: { type: boolean, description: มี AI ฟรี (Gemini) ให้ใช้ไหม }
+
+    AISettingsRequest:
+      type: object
+      description: "ร้านเลือก AI — provider ไม่ส่ง = claude (ต้องมี api_key sk-ant-...) / openai ต้องมี base_url + model (api_key ไม่ใส่ก็ได้)"
+      properties:
+        provider: { type: string, enum: [claude, openai], example: openai }
+        api_key: { type: string, example: "sk-..." }
+        base_url: { type: string, example: "https://api.deepseek.com/v1", description: "http(s) — / ท้ายตัดให้เอง" }
+        model: { type: string, example: deepseek-chat }
 
     MarketCheck:
       type: object

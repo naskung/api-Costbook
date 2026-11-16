@@ -17,8 +17,17 @@ var ErrNotFound = errors.New("market check not found")
 type Repository interface {
 	LatestMarketCheck(ctx context.Context, productID string) (MarketCheck, error)
 	SaveMarketCheck(ctx context.Context, p product.Product, report MarketReport) (MarketCheck, error)
-	SavedClaudeKey(ctx context.Context) (string, error)
-	SaveClaudeKey(ctx context.Context, encrypted string) error
+	SavedAI(ctx context.Context) (SavedAI, error)
+	SaveAI(ctx context.Context, saved SavedAI) error
+}
+
+// SavedAI AI ที่ร้านตั้งไว้ในหน้าตั้งค่า (ตาราง company) — Provider ว่าง = ยังไม่ได้ตั้ง
+// Provider = claude / openai, BaseURL + Model ใช้เฉพาะ openai, EncryptedKey = key ที่เข้ารหัสแล้ว (ว่างได้ เช่น Ollama ในเครื่อง)
+type SavedAI struct {
+	Provider     string
+	BaseURL      string
+	Model        string
+	EncryptedKey string
 }
 
 type PostgresRepository struct {
@@ -64,16 +73,20 @@ func (r *PostgresRepository) SaveMarketCheck(ctx context.Context, p product.Prod
 	return scanMarketCheck(row)
 }
 
-// SavedClaudeKey key ของ Claude ที่ร้านใส่ไว้ (เข้ารหัสอยู่)
-func (r *PostgresRepository) SavedClaudeKey(ctx context.Context) (string, error) {
-	var encrypted string
-	err := r.db.QueryRow(ctx, `SELECT ai_key FROM company WHERE id = 1`).Scan(&encrypted)
-	return encrypted, err
+// SavedAI AI ที่ร้านตั้งไว้ (key ยังเข้ารหัสอยู่)
+func (r *PostgresRepository) SavedAI(ctx context.Context) (SavedAI, error) {
+	var s SavedAI
+	err := r.db.QueryRow(ctx, `SELECT ai_provider, ai_base_url, ai_model, ai_key FROM company WHERE id = 1`).
+		Scan(&s.Provider, &s.BaseURL, &s.Model, &s.EncryptedKey)
+	return s, err
 }
 
-// SaveClaudeKey บันทึก key ที่เข้ารหัสแล้ว (ส่ง "" = ลบ key กลับไปใช้ AI ฟรี)
-func (r *PostgresRepository) SaveClaudeKey(ctx context.Context, encrypted string) error {
-	_, err := r.db.Exec(ctx, `UPDATE company SET ai_key = $1, updated_at = now() WHERE id = 1`, encrypted)
+// SaveAI บันทึก AI ที่ร้านเลือก (ส่ง SavedAI{} = ลบ กลับไปใช้ AI จาก .env)
+func (r *PostgresRepository) SaveAI(ctx context.Context, s SavedAI) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE company SET ai_provider = $1, ai_base_url = $2, ai_model = $3, ai_key = $4, updated_at = now()
+		WHERE id = 1`,
+		s.Provider, s.BaseURL, s.Model, s.EncryptedKey)
 	return err
 }
 

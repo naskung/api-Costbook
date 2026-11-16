@@ -66,18 +66,18 @@ func (f *fakeClaude) lastRequestJSON() string {
 
 // fakeRepository ตาราง market_checks + key ของ AI ปลอม
 type fakeRepository struct {
-	latest       MarketCheck
-	found        bool
-	saved        *MarketReport
-	encryptedKey string
+	latest MarketCheck
+	found  bool
+	saved  *MarketReport
+	ai     SavedAI
 }
 
-func (f *fakeRepository) SavedClaudeKey(ctx context.Context) (string, error) {
-	return f.encryptedKey, nil
+func (f *fakeRepository) SavedAI(ctx context.Context) (SavedAI, error) {
+	return f.ai, nil
 }
 
-func (f *fakeRepository) SaveClaudeKey(ctx context.Context, encrypted string) error {
-	f.encryptedKey = encrypted
+func (f *fakeRepository) SaveAI(ctx context.Context, saved SavedAI) error {
+	f.ai = saved
 	return nil
 }
 

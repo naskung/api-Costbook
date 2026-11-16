@@ -230,28 +230,9 @@ func runGeminiParts(ctx context.Context, tools toolbox, parts []json.RawMessage,
 		}
 
 		call := part.FunctionCall
-		output := map[string]any{}
-		if strings.HasPrefix(call.Name, "propose_") && len(reply.Actions) >= maxActions {
-			output["error"] = "เสนอได้ไม่เกิน 5 งานต่อครั้ง"
-		} else {
-			args := call.Args
-			if len(args) == 0 {
-				args = json.RawMessage("{}")
-			}
-			text, action, err := tools.run(ctx, call.Name, args)
-			var toolErr toolError
-			switch {
-			case errors.As(err, &toolErr):
-				output["error"] = toolErr.Error()
-			case err != nil:
-				return nil, nil, err
-			default:
-				output["result"] = text
-				if action != nil {
-					action.ID = geminiActionID(call.ID, call.Name, len(reply.Actions))
-					reply.Actions = append(reply.Actions, *action)
-				}
-			}
+		output, err := callTool(ctx, tools, call.Name, call.Args, call.ID, reply)
+		if err != nil {
+			return nil, nil, err
 		}
 
 		response := map[string]any{"name": call.Name, "response": output}
@@ -264,8 +245,33 @@ func runGeminiParts(ctx context.Context, tools toolbox, parts []json.RawMessage,
 	return texts, results, nil
 }
 
-// geminiActionID id ของงานที่เสนอ (Gemini บางรุ่นไม่ส่ง id มา → ใช้ชื่อเครื่องมือ + ลำดับแทน)
-func geminiActionID(callID, name string, index int) string {
+// callTool ทำเครื่องมือ 1 ตัวที่ AI เรียก (Gemini / AI แบบ OpenAI ใช้ร่วมกัน) ได้ผลส่งกลับให้ AI:
+// {"result": ...} หรือ {"error": ...} (ข้อมูลผิด → ให้ AI แก้เอง ไม่ใช่ error ของ request)
+// งานที่เสนอเก็บใน reply.Actions ไม่เกิน maxActions / error อื่น (เช่น DB พัง) คืนเป็น err
+func callTool(ctx context.Context, tools toolbox, name string, args json.RawMessage, callID string, reply *ChatReply) (map[string]any, error) {
+	if strings.HasPrefix(name, "propose_") && len(reply.Actions) >= maxActions {
+		return map[string]any{"error": "เสนอได้ไม่เกิน 5 งานต่อครั้ง"}, nil
+	}
+	if len(bytes.TrimSpace(args)) == 0 {
+		args = json.RawMessage("{}")
+	}
+	text, action, err := tools.run(ctx, name, args)
+	var toolErr toolError
+	if errors.As(err, &toolErr) {
+		return map[string]any{"error": toolErr.Error()}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if action != nil {
+		action.ID = actionIDOf(callID, name, len(reply.Actions))
+		reply.Actions = append(reply.Actions, *action)
+	}
+	return map[string]any{"result": text}, nil
+}
+
+// actionIDOf id ของงานที่เสนอ (บาง AI ไม่ส่ง id มา → ใช้ชื่อเครื่องมือ + ลำดับแทน)
+func actionIDOf(callID, name string, index int) string {
 	if callID != "" {
 		return callID
 	}

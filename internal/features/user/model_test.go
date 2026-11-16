@@ -15,7 +15,11 @@ func TestCreateRequest_Validate(t *testing.T) {
 		want string
 	}{
 		{"ครบ ผ่าน (อีเมลตัวใหญ่ / มีช่องว่างได้ เก็บเป็นตัวเล็ก)", func(r *CreateRequest) {}, ""},
-		{"อีเมลผิดรูปแบบ", func(r *CreateRequest) { r.Email = "staff" }, "user_email_invalid"},
+		{"ชื่อผู้ใช้แทนอีเมล ผ่าน", func(r *CreateRequest) { r.Email = "admin1234" }, ""},
+		{"ชื่อผู้ใช้ตัวใหญ่ ผ่าน (เก็บเป็นตัวเล็ก)", func(r *CreateRequest) { r.Email = " Admin1234 " }, ""},
+		{"ชื่อผู้ใช้สั้นเกิน", func(r *CreateRequest) { r.Email = "ab" }, "user_email_invalid"},
+		{"ชื่อผู้ใช้มีช่องว่าง", func(r *CreateRequest) { r.Email = "ad min" }, "user_email_invalid"},
+		{"อีเมลผิดรูปแบบ", func(r *CreateRequest) { r.Email = "staff@costbook" }, "user_email_invalid"},
 		{"ไม่มีชื่อ", func(r *CreateRequest) { r.FirstName = "  " }, "user_name_required"},
 		{"ชื่อยาวเกิน", func(r *CreateRequest) { r.FirstName = strings.Repeat("ก", maxNameLength+1) }, "user_name_too_long"},
 		{"role ไม่มีจริง", func(r *CreateRequest) { r.Role = "admin" }, "user_role_invalid"},

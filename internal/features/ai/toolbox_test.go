@@ -94,7 +94,7 @@ func TestToolbox_Transaction(t *testing.T) {
 
 func TestToolbox_Dashboard_Month(t *testing.T) {
 	text, _, err := runTool(t, "get_dashboard", `{}`)
-	if err != nil || !strings.Contains(text, `"month":"2026-10"`) {
+	if err != nil || !strings.Contains(text, `"from":"2026-10-01","to":"2026-10-31"`) {
 		t.Errorf("ไม่ใส่เดือน = เดือนนี้ ได้ %s %v", text, err)
 	}
 	_, _, err = runTool(t, "get_dashboard", `{"month":"ตุลา"}`)

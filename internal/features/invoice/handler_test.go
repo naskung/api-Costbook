@@ -27,17 +27,17 @@ const (
 // fakeRepository ฐานข้อมูลปลอม ใช้แทน Postgres ตอน test
 // createErr / cancelErr / deliveryErr ใช้จำลอง error ของ DB เช่น ของไม่พอ ร้านไม่มีเลขภาษี ใบยกเลิกไปแล้ว
 type fakeRepository struct {
-	invoice       Invoice
-	gotMonthStart string
-	gotPage       [2]int
-	createErr     error
-	cancelErr     error
-	deliveryErr   error
-	err           error
+	invoice     Invoice
+	gotPeriod   utils.DateRange
+	gotPage     [2]int
+	createErr   error
+	cancelErr   error
+	deliveryErr error
+	err         error
 }
 
-func (f *fakeRepository) List(ctx context.Context, monthStart string, limit, offset int) ([]InvoiceSummary, error) {
-	f.gotMonthStart = monthStart
+func (f *fakeRepository) List(ctx context.Context, period utils.DateRange, limit, offset int) ([]InvoiceSummary, error) {
+	f.gotPeriod = period
 	f.gotPage = [2]int{limit, offset}
 	return []InvoiceSummary{}, f.err
 }
@@ -113,19 +113,19 @@ func TestHandler_RequiresLogin(t *testing.T) {
 
 func TestHandler_List(t *testing.T) {
 	repo := issuedRepo()
-	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/invoices?month=2026-10", "")
+	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/invoices?from=2026-10-01&to=2026-10-15", "")
 
 	if rec.Code != http.StatusOK || rec.Body.String() != "[]" {
 		t.Errorf("status = %d body = %s, ต้องได้ 200 []", rec.Code, rec.Body.String())
 	}
-	if repo.gotMonthStart != "2026-10-01" {
-		t.Errorf("monthStart = %q, ต้องได้ 2026-10-01", repo.gotMonthStart)
+	if repo.gotPeriod != (utils.DateRange{From: "2026-10-01", To: "2026-10-15"}) {
+		t.Errorf("period = %+v, ต้องได้ 2026-10-01 ถึง 2026-10-15", repo.gotPeriod)
 	}
 }
 
 func TestHandler_List_Page(t *testing.T) {
 	repo := issuedRepo()
-	sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/invoices?month=2026-10&limit=20&offset=40", "")
+	sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/invoices?from=2026-10-01&to=2026-10-31&limit=20&offset=40", "")
 	if repo.gotPage != [2]int{20, 40} {
 		t.Errorf("ต้องส่ง limit / offset ต่อให้ repository ได้ %v", repo.gotPage)
 	}
@@ -135,11 +135,11 @@ func TestHandler_List_Page(t *testing.T) {
 	}
 }
 
-func TestHandler_List_BadMonth(t *testing.T) {
-	rec := sendRequest(newTestRouter(issuedRepo()), http.MethodGet, "/api/v1/invoices?month=2026", "")
+func TestHandler_List_BadDateRange(t *testing.T) {
+	rec := sendRequest(newTestRouter(issuedRepo()), http.MethodGet, "/api/v1/invoices?from=2026-10-31&to=2026-10-01", "")
 
-	if rec.Body.String() != `{"error":"month_invalid"}` {
-		t.Errorf("body = %s, ต้องได้ month_invalid", rec.Body.String())
+	if rec.Body.String() != `{"error":"date_range_invalid"}` {
+		t.Errorf("body = %s, ต้องได้ date_range_invalid", rec.Body.String())
 	}
 }
 

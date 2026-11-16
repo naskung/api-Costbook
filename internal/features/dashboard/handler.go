@@ -20,15 +20,14 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 	api.GET("/dashboard", authRequired, h.Get)
 }
 
-// Get GET /api/v1/dashboard?month=2026-10 (ไม่ส่ง month = เดือนนี้)
+// Get GET /api/v1/dashboard?from=2026-11-01&to=2026-11-16 (ไม่ส่ง from / to = ทั้งเดือนนี้)
 func (h *Handler) Get(c *gin.Context) {
-	monthStart, ok := helpers.MonthStart(c)
+	period, ok := helpers.DateRangeParams(c)
 	if !ok {
-		helpers.WriteError(c, http.StatusBadRequest, "month_invalid")
 		return
 	}
 
-	dashboard, err := h.repo.Get(c.Request.Context(), monthStart)
+	dashboard, err := h.repo.Get(c.Request.Context(), period)
 	if err != nil {
 		helpers.ServerError(c, err)
 		return

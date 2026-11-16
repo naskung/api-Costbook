@@ -91,20 +91,11 @@ func marketPositionOf(m MarketPosition, sellPrice float64, vatRegistered, prices
 	return m
 }
 
-// previousMonthStart วันแรกของเดือนก่อน เช่น "2026-01-01" → "2025-12-01" (รูปแบบผิด → คืนค่าเดิม)
-func previousMonthStart(monthStart string) string {
-	start, err := time.Parse("2006-01-02", monthStart)
-	if err != nil {
-		return monthStart
-	}
-	return start.AddDate(0, -1, 0).Format("2006-01-02")
-}
-
-// monthTotals ยอดของ 1 เดือนสำหรับกราฟย้อนหลัง (คิดกำไรด้วย transaction.NewSummary)
-func monthTotals(month string, bills int, a transaction.MonthAmounts) MonthTotals {
-	s := transaction.NewSummary(month, a)
+// monthTotals ยอดของ 1 ช่วง สำหรับกราฟย้อนหลัง / ช่วงก่อนหน้า (คิดกำไรด้วย transaction.NewSummary)
+func monthTotals(period utils.DateRange, bills int, a transaction.Amounts) MonthTotals {
+	s := transaction.NewSummary(period, a)
 	return MonthTotals{
-		Month:            month,
+		Month:            period.From[:7], // "2026-10-17" → "2026-10"
 		Income:           s.Income,
 		Expense:          s.Expense,
 		Profit:           s.Profit,
@@ -117,23 +108,17 @@ func monthTotals(month string, bills int, a transaction.MonthAmounts) MonthTotal
 	}
 }
 
-// trendMonthStarts วันแรกของเดือนย้อนหลัง count เดือน เรียงเก่า → ใหม่ (เดือนสุดท้าย = เดือนที่เลือก)
-func trendMonthStarts(monthStart string, count int) []string {
-	start, err := time.Parse("2006-01-02", monthStart)
+// trendMonths เดือนย้อนหลัง count เดือน (ทั้งเดือน) เรียงเก่า → ใหม่
+// เดือนสุดท้าย = เดือนของวันสุดท้ายที่เลือก เช่น เลือก 1–16 พ.ย. 2026 → มิ.ย. ถึง พ.ย. 2026
+func trendMonths(lastDay string, count int) []utils.DateRange {
+	end, err := time.Parse(utils.DateLayout, lastDay)
 	if err != nil {
-		return []string{monthStart}
+		return []utils.DateRange{}
 	}
-	months := make([]string, 0, count)
+	firstOfMonth := time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, time.UTC)
+	months := make([]utils.DateRange, 0, count)
 	for i := count - 1; i >= 0; i-- {
-		months = append(months, start.AddDate(0, -i, 0).Format("2006-01-02"))
+		months = append(months, utils.MonthRange(firstOfMonth.AddDate(0, -i, 0)))
 	}
 	return months
-}
-
-// previousMonth เดือนก่อนเดือนที่เลือก = ตัวรองสุดท้ายของกราฟย้อนหลัง (เรียงเก่า → ใหม่)
-func previousMonth(trend []MonthTotals) MonthTotals {
-	if len(trend) < 2 {
-		return MonthTotals{}
-	}
-	return trend[len(trend)-2]
 }

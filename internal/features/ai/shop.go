@@ -10,6 +10,7 @@ import (
 	"github.com/naskung/api-Costbook/internal/features/field"
 	"github.com/naskung/api-Costbook/internal/features/product"
 	"github.com/naskung/api-Costbook/internal/features/transaction"
+	"github.com/naskung/api-Costbook/internal/utils"
 )
 
 // ShopReader ข้อมูลร้านที่ AI อ่านได้ (อ่านอย่างเดียว — การแก้ข้อมูลต้องให้ผู้ใช้กดยืนยันใน Flutter)
@@ -21,8 +22,8 @@ type ShopReader interface {
 	Products(ctx context.Context) ([]product.Product, error)
 	Product(ctx context.Context, id string) (product.Product, error)
 	CostSheet(ctx context.Context, productID string) (cost.CostSheet, error)
-	Dashboard(ctx context.Context, monthStart string) (dashboard.Dashboard, error)
-	Transactions(ctx context.Context, monthStart string) ([]transaction.Transaction, error)
+	Dashboard(ctx context.Context, period utils.DateRange) (dashboard.Dashboard, error)
+	Transactions(ctx context.Context, period utils.DateRange) ([]transaction.Transaction, error)
 }
 
 // Shop ต่อ ShopReader เข้ากับ repository จริงของแต่ละ feature
@@ -61,10 +62,10 @@ func (s Shop) CostSheet(ctx context.Context, productID string) (cost.CostSheet, 
 	return s.CostRepo.Get(ctx, productID)
 }
 
-func (s Shop) Dashboard(ctx context.Context, monthStart string) (dashboard.Dashboard, error) {
-	return s.DashboardRepo.Get(ctx, monthStart)
+func (s Shop) Dashboard(ctx context.Context, period utils.DateRange) (dashboard.Dashboard, error) {
+	return s.DashboardRepo.Get(ctx, period)
 }
 
-func (s Shop) Transactions(ctx context.Context, monthStart string) ([]transaction.Transaction, error) {
-	return s.TransactionRepo.List(ctx, monthStart, 0, 0)
+func (s Shop) Transactions(ctx context.Context, period utils.DateRange) ([]transaction.Transaction, error) {
+	return s.TransactionRepo.List(ctx, period, 0, 0)
 }

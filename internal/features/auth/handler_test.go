@@ -105,6 +105,19 @@ func TestHandler_Login_Success(t *testing.T) {
 	}
 }
 
+func TestHandler_Login_Username(t *testing.T) {
+	admin := newAdmin(t)
+	admin.Email = "admin1234" // ผู้ใช้ที่ไม่มีอีเมล ใช้ชื่อผู้ใช้ login แทน
+	router := newTestRouter(&fakeRepository{users: []User{admin}})
+
+	// ตัวพิมพ์ใหญ่ + มีช่องว่าง ก็ต้อง login ได้ เหมือนอีเมล
+	rec := postLogin(router, `{"email":" Admin1234 ","password":"1234"}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, ต้องได้ %d (body: %s)", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
 func TestHandler_Login_Fail(t *testing.T) {
 	tests := []struct {
 		name       string

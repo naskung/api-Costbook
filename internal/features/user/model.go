@@ -46,6 +46,7 @@ type PasswordRequest struct {
 }
 
 // CreateRequest เจ้าของร้านเพิ่มผู้ใช้ (POST /users) พร้อมตั้งรหัสผ่านแรกให้
+// Email = ชื่อที่ใช้ login: อีเมล หรือชื่อผู้ใช้ก็ได้ (ชื่อ json ยังเป็น email เพื่อไม่ให้ Flutter ต้องแก้ model)
 type CreateRequest struct {
 	Email     string `json:"email"`
 	FirstName string `json:"first_name"`
@@ -79,8 +80,10 @@ func (r PasswordRequest) Validate() string {
 	return validatePassword(r.NewPassword)
 }
 
+// ช่อง email = ชื่อที่ใช้ login จะเป็นอีเมล หรือชื่อผู้ใช้ (เช่น "admin1234") ก็ได้
 func (r CreateRequest) Validate() string {
-	if !utils.IsEmail(normalizeEmail(r.Email)) {
+	login := normalizeEmail(r.Email)
+	if !utils.IsEmail(login) && !utils.IsUsername(login) {
 		return "user_email_invalid"
 	}
 	if code := validateName(r.FirstName, r.LastName); code != "" {
@@ -123,7 +126,7 @@ func validatePassword(password string) string {
 	return ""
 }
 
-// normalizeEmail อีเมลเก็บเป็นตัวเล็กไม่มีช่องว่างหน้าหลัง (ตอน login ก็แปลงแบบเดียวกัน)
+// normalizeEmail อีเมล / ชื่อผู้ใช้ เก็บเป็นตัวเล็กไม่มีช่องว่างหน้าหลัง (ตอน login ก็แปลงแบบเดียวกัน)
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }

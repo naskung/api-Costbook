@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/naskung/api-Costbook/internal/features/stock"
+	"github.com/naskung/api-Costbook/internal/utils"
 )
 
 // error ที่ handler แปลงเป็น status + error code
@@ -22,10 +23,10 @@ var (
 )
 
 // Repository คือรายการคำสั่งที่คุยกับ DB
-// monthStart = วันแรกของเดือน เช่น "2026-10-01"
+// period = ช่วงวันที่ที่เลือก (นับรวมทั้ง 2 วัน)
 type Repository interface {
-	// limit / offset = โหลดทีละหน้า (limit 0 = ทั้งเดือน)
-	List(ctx context.Context, monthStart string, limit, offset int) ([]InvoiceSummary, error)
+	// limit / offset = โหลดทีละหน้า (limit 0 = ทั้งช่วง)
+	List(ctx context.Context, period utils.DateRange, limit, offset int) ([]InvoiceSummary, error)
 	FindByID(ctx context.Context, id string) (Invoice, error)
 	Create(ctx context.Context, req InvoiceRequest) (Invoice, error)
 	Cancel(ctx context.Context, id string) (Invoice, error)
@@ -47,13 +48,13 @@ type seller struct {
 }
 
 // List ล่าสุดก่อน / id ต่อท้ายให้ลำดับตายตัว (โหลดทีละหน้าไม่ซ้ำ ไม่ข้าม) / LIMIT NULL = ไม่จำกัด
-func (r *PostgresRepository) List(ctx context.Context, monthStart string, limit, offset int) ([]InvoiceSummary, error) {
+func (r *PostgresRepository) List(ctx context.Context, period utils.DateRange, limit, offset int) ([]InvoiceSummary, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, doc_type, invoice_no, issue_date::text, status, delivery_status, customer_name, total
 		FROM invoices
-		WHERE issue_date >= $1::date AND issue_date < $1::date + interval '1 month'
+		WHERE issue_date BETWEEN $1::date AND $2::date
 		ORDER BY issue_date DESC, invoice_no DESC, id
-		LIMIT NULLIF($2::int, 0) OFFSET $3`, monthStart, limit, offset)
+		LIMIT NULLIF($3::int, 0) OFFSET $4`, period.From, period.To, limit, offset)
 	if err != nil {
 		return nil, err
 	}

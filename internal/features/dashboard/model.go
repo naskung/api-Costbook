@@ -2,13 +2,17 @@ package dashboard
 
 import "time"
 
-// Dashboard ตัวเลขสรุปของหน้าแรก (เดือนที่เลือก)
+// Dashboard ตัวเลขสรุปของหน้าแรก (ช่วงวันที่ from ถึง to นับรวมทั้ง 2 วัน)
+// previous_from / previous_to = ช่วงก่อนหน้าที่เอามาเทียบ (previous / previous_daily_sales) ดู utils.PreviousRange
 // invoice_count / invoice_total นับเฉพาะเอกสารขายที่ยังไม่ยกเลิก / low_stock ไม่นับสินค้าที่ไม่นับสต็อก
 // income / expense = เงินเข้า / ออกตามที่บันทึก, revenue = รายได้ (ยอดขายก่อน VAT + รายรับอื่น)
 // profit = กำไรสุทธิ = revenue − ต้นทุนสินค้าที่ขาย (sales.cost) − operating_expense (รายจ่ายไม่รวมซื้อวัตถุดิบ)
 // คิดด้วย transaction.NewSummary ตัวเดียวกับหน้ารายรับ-รายจ่าย
 type Dashboard struct {
-	Month            string  `json:"month"`
+	From             string  `json:"from"`
+	To               string  `json:"to"`
+	PreviousFrom     string  `json:"previous_from"`
+	PreviousTo       string  `json:"previous_to"`
 	Income           float64 `json:"income"`
 	Expense          float64 `json:"expense"`
 	Profit           float64 `json:"profit"`
@@ -44,7 +48,7 @@ type LowStockItem struct {
 	MinStock  int    `json:"min_stock"`
 }
 
-// SalesSummary ยอดขายจากเอกสารขายของเดือน
+// SalesSummary ยอดขายจากเอกสารขายของช่วงวันที่ที่เลือก
 // net_sales = ยอดขายก่อน VAT หลังหักส่วนลด (เงินที่ร้านได้จริง) / cost = ต้นทุนของที่ขายไป (ต้นทุน ณ วันที่ขาย)
 // gross_margin = กำไรขั้นต้น ÷ ยอดขาย × 100
 type SalesSummary struct {
@@ -58,7 +62,8 @@ type SalesSummary struct {
 	AverageBill float64 `json:"average_bill"`
 }
 
-// MonthTotals ยอดของ 1 เดือน (ไว้ทำกราฟย้อนหลัง และเทียบกับเดือนก่อน) — ความหมายเหมือน Dashboard / transaction.Summary
+// MonthTotals ยอดของ 1 ช่วง (กราฟย้อนหลังทีละเดือน / ช่วงก่อนหน้าที่เอามาเทียบ) — ความหมายเหมือน Dashboard / transaction.Summary
+// month = เดือนของวันแรกในช่วง (ช่วงก่อนหน้าดูวันที่จริงที่ previous_from / previous_to)
 // net_sales / bills / gross_profit / cost_of_sales มาจากเอกสารขาย, profit = กำไรสุทธิ
 type MonthTotals struct {
 	Month            string  `json:"month"`
@@ -73,7 +78,7 @@ type MonthTotals struct {
 	OperatingExpense float64 `json:"operating_expense"`
 }
 
-// DailySales ยอดขายรายวัน (มีทุกวันของเดือน วันที่ไม่มีขายได้ 0)
+// DailySales ยอดขายรายวัน (มีทุกวันในช่วง วันที่ไม่มีขายได้ 0)
 type DailySales struct {
 	Date     string  `json:"date"`
 	NetSales float64 `json:"net_sales"`

@@ -173,11 +173,11 @@ func (t toolbox) marketCheck(ctx context.Context, input []byte) (string, *Action
 }
 
 func (t toolbox) dashboard(ctx context.Context, input []byte) (string, *Action, error) {
-	monthStart, err := t.monthOf(input)
+	period, err := t.monthOf(input)
 	if err != nil {
 		return "", nil, err
 	}
-	d, err := t.shop.Dashboard(ctx, monthStart)
+	d, err := t.shop.Dashboard(ctx, period)
 	if err != nil {
 		return "", nil, err
 	}
@@ -185,11 +185,11 @@ func (t toolbox) dashboard(ctx context.Context, input []byte) (string, *Action, 
 }
 
 func (t toolbox) transactions(ctx context.Context, input []byte) (string, *Action, error) {
-	monthStart, err := t.monthOf(input)
+	period, err := t.monthOf(input)
 	if err != nil {
 		return "", nil, err
 	}
-	list, err := t.shop.Transactions(ctx, monthStart)
+	list, err := t.shop.Transactions(ctx, period)
 	if err != nil {
 		return "", nil, err
 	}
@@ -412,22 +412,22 @@ func (t toolbox) findProduct(ctx context.Context, id string) (product.Product, e
 	return p, err
 }
 
-// monthOf อ่าน month (YYYY-MM) จาก input → วันแรกของเดือน ไม่ใส่ = เดือนนี้
-func (t toolbox) monthOf(input []byte) (string, error) {
+// monthOf อ่าน month (YYYY-MM) จาก input → ทั้งเดือนนั้น ไม่ใส่ = เดือนนี้
+func (t toolbox) monthOf(input []byte) (utils.DateRange, error) {
 	var in struct {
 		Month string `json:"month"`
 	}
 	if err := readInput(input, &in); err != nil {
-		return "", err
+		return utils.DateRange{}, err
 	}
 	if in.Month == "" {
 		in.Month = t.today.Format("2006-01")
 	}
 	start, err := time.Parse("2006-01", in.Month)
 	if err != nil {
-		return "", toolError("month ต้องเป็นแบบ YYYY-MM เช่น 2026-10")
+		return utils.DateRange{}, toolError("month ต้องเป็นแบบ YYYY-MM เช่น 2026-10")
 	}
-	return start.Format("2006-01-02"), nil
+	return utils.MonthRange(start), nil
 }
 
 // requestOf ข้อมูลสินค้าปัจจุบันในรูปแบบที่ PUT /products/{id} รับ

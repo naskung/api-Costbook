@@ -33,6 +33,7 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 }
 
 // Login POST /api/v1/auth/login
+// ช่อง email กรอกได้ทั้งอีเมล หรือชื่อผู้ใช้ (เช่น "admin1234") — ค้นจาก column email เหมือนกัน
 // อีเมลไม่มีในระบบ หรือรหัสผ่านผิด ตอบ invalid_credentials เหมือนกัน → คนเดาจะไม่รู้ว่าอีเมลนี้มีจริงไหม
 func (h *Handler) Login(c *gin.Context) {
 	var req LoginRequest

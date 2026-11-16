@@ -79,8 +79,8 @@ api-Costbook/
 │   ├── database/             เชื่อมต่อ PostgreSQL (Phase 2)
 │   ├── router/               สร้าง Gin router + รวม route ทั้งหมดไว้ที่เดียว
 │   ├── middleware/           ทำงานก่อนทุก request: cors, auth (Authenticated = ต้อง login, RequireRole = เฉพาะบาง role) (logger มากับ gin.Default() แล้ว)
-│   ├── helpers/              ช่วยงาน HTTP: WriteError, ServerError, MonthStart (?month=), UUIDParam (:id), ReadImage (อ่านรูปที่อัปโหลด) (ตอบสำเร็จใช้ c.JSON ของ Gin)
-│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), cost (CostPerUnit), date (IsDate), check (IsUUID, IsTaxID, IsEmail), token (JWT), image (ImageContentType), secret (Encrypt / Decrypt)
+│   ├── helpers/              ช่วยงาน HTTP: WriteError, ServerError, DateRangeParams (?from=&to=), PageParams (?limit=&offset=), UUIDParam (:id), ReadImage (อ่านรูปที่อัปโหลด) (ตอบสำเร็จใช้ c.JSON ของ Gin)
+│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), cost (CostPerUnit), date (IsDate, DateRange, MonthRange, PreviousRange), check (IsUUID, IsTaxID, IsEmail, IsUsername), token (JWT), image (ImageContentType), secret (Encrypt / Decrypt)
 │   └── features/
 │       ├── auth/             login + ข้อมูลผู้ใช้ที่ login อยู่ (ตาราง users) + ชื่อ role
 │       ├── user/             โปรไฟล์ของตัวเอง (ชื่อ / รหัสผ่าน / รูป) + จัดการผู้ใช้ของร้าน (เฉพาะเจ้าของร้าน)
@@ -169,7 +169,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 | status error | เมื่อไหร่ | ตัวอย่าง code |
 |---|---|---|
-| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `month_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `cost_material_invalid` (วัสดุที่ผูกไม่มีจริง / เป็นสินค้าตัวเอง / บรรทัดแบบ %), `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid`, `product_image_required`, `product_image_too_large`, `product_image_type_invalid`, `ai_key_format_invalid`, `ai_key_invalid` (ตอนบันทึก key แล้ว Anthropic ไม่รับ) |
+| 400 | ข้อมูลที่ส่งมาผิด | `invalid_json`, `date_range_invalid`, `email_required`, `password_required`, `company_name_required`, `company_tax_id_invalid`, `logo_required`, `logo_too_large`, `logo_type_invalid`, `product_name_required`, `product_price_invalid`, `product_min_stock_invalid`, `cost_batch_quantity_invalid`, `cost_type_invalid`, `cost_name_required`, `cost_amount_invalid`, `cost_material_invalid` (วัสดุที่ผูกไม่มีจริง / เป็นสินค้าตัวเอง / บรรทัดแบบ %), `stock_product_required`, `stock_quantity_invalid`, `transaction_type_invalid`, `transaction_category_required`, `transaction_amount_invalid`, `transaction_date_invalid`, `invoice_date_invalid`, `invoice_customer_required`, `invoice_customer_tax_id_invalid`, `invoice_items_required`, `invoice_item_invalid`, `product_image_required`, `product_image_too_large`, `product_image_type_invalid`, `ai_key_format_invalid`, `ai_key_invalid` (ตอนบันทึก key แล้ว Anthropic ไม่รับ) |
 | 401 | ยังไม่ login / token ผิดหรือหมดอายุ / login ไม่ผ่าน | `unauthorized`, `invalid_credentials` |
 | 404 | ไม่เจอข้อมูล / ไม่มี path นี้ / id ไม่ใช่ UUID | `product_not_found`, `transaction_not_found`, `invoice_not_found`, `logo_not_found`, `product_image_not_found`, `not_found` (จาก `r.NoRoute` ใน router) |
 | 409 | ขัดกับข้อมูลที่มีอยู่ | `stock_not_enough`, `material_not_enough` (ตอบ field เพิ่ม `material` / `unit` / `need` / `have` ให้หน้าเว็บโชว์), `product_not_for_sale`, `product_in_use`, `transaction_from_invoice`, `invoice_already_cancelled` (ยกเลิกซ้ำ / เปลี่ยนสถานะการส่งของใบที่ยกเลิกแล้ว), `company_tax_id_required`, `ai_search_unavailable` (AI ฟรีค้นเว็บไม่ได้ → เช็คราคาตลาดไม่ได้) |
@@ -223,17 +223,17 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `GET /api/v1/stock/movements?product_id=&limit=&offset=` | ประวัติรับเข้า / เบิกออก (ไม่ส่ง limit = ล่าสุด 200) |
 | | `POST /api/v1/stock/in` | รับสินค้าเข้า |
 | | `POST /api/v1/stock/out` | เบิกสินค้าออก |
-| transaction ✅ | `GET /api/v1/transactions?month=2026-10` | รายรับ-รายจ่ายของเดือน |
-| | `GET /api/v1/transactions/summary?month=2026-10` | สรุปเงินของเดือน: รายได้ / ต้นทุนสินค้าที่ขาย / กำไรขั้นต้น / รายจ่าย / กำไรสุทธิ (ดูกฎ "กำไร" ในหัวข้อ 10) |
+| transaction ✅ | `GET /api/v1/transactions?from=2026-11-01&to=2026-11-16` | รายรับ-รายจ่ายของช่วงวันที่ |
+| | `GET /api/v1/transactions/summary?from=2026-11-01&to=2026-11-16` | สรุปเงินของช่วงวันที่: รายได้ / ต้นทุนสินค้าที่ขาย / กำไรขั้นต้น / รายจ่าย / กำไรสุทธิ (ดูกฎ "กำไร" ในหัวข้อ 10) |
 | | `POST /api/v1/transactions` | เพิ่มรายการ |
 | | `PUT /api/v1/transactions/{id}` | แก้รายการ |
 | | `DELETE /api/v1/transactions/{id}` | ลบรายการ |
-| invoice ✅ | `GET /api/v1/invoices?month=2026-10` | เอกสารขายของเดือน (ใบกำกับภาษี + ใบเสร็จรับเงิน) |
+| invoice ✅ | `GET /api/v1/invoices?from=2026-11-01&to=2026-11-16` | เอกสารขายของช่วงวันที่ (ใบกำกับภาษี + ใบเสร็จรับเงิน) |
 | | `GET /api/v1/invoices/{id}` | เอกสาร 1 ใบ (Flutter เอาไปสร้าง PDF) |
 | | `POST /api/v1/invoices` | ออกเอกสารขาย — ร้านจด VAT ได้ใบกำกับภาษี ไม่จด ได้ใบเสร็จ |
 | | `POST /api/v1/invoices/{id}/cancel` | ยกเลิกเอกสาร |
 | | `PUT /api/v1/invoices/{id}/delivery` | เปลี่ยนสถานะการส่งสินค้า `{"delivery_status": "pending" / "shipped" / "received"}` |
-| dashboard ✅ | `GET /api/v1/dashboard?month=2026-10` | ตัวเลขสรุปหน้าแรก + ยอดขายรายวัน / ย้อนหลัง 6 เดือน / กำไรขั้นต้น / ขายดี / ตามหมวด / มูลค่าสต็อก / เทียบราคาตลาด |
+| dashboard ✅ | `GET /api/v1/dashboard?from=2026-11-01&to=2026-11-16` | ตัวเลขสรุปหน้าแรก + ยอดขายรายวัน / ย้อนหลัง 6 เดือน / กำไรขั้นต้น / ขายดี / ตามหมวด / มูลค่าสต็อก / เทียบราคาตลาด |
 | ai ✅ | `GET /api/v1/ai/status` | ตอนนี้ใช้ AI ตัวไหน (Claude / Gemini ฟรี / ไม่มี) ค้นเว็บได้ไหม ร้านใส่ key เองไหม |
 | | `PUT /api/v1/ai/key` | ร้านใส่ key ของ Claude เอง (ลอง key กับ Anthropic ก่อน แล้วเก็บแบบเข้ารหัส) |
 | | `DELETE /api/v1/ai/key` | ลบ key ของร้าน → กลับไปใช้ key ใน `.env` หรือ AI ฟรี |
@@ -256,7 +256,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 ทุก endpoint ยกเว้น health / auth/login / GET company / GET company/logo **ต้อง login** (`authRequired`)
 endpoint ที่เขียนว่า **เฉพาะเจ้าของร้าน** → role อื่นได้ 403 `forbidden` (ตอนนี้มีแค่จัดการผู้ใช้ ที่เหลือทุก role ใช้ได้เหมือนกัน)
-`?month=2026-10` ไม่ส่ง = เดือนนี้ อ่านด้วย `helpers.MonthStart(c)` ได้วันแรกของเดือน `"2026-10-01"` ไปใช้ใน SQL: `date >= $1::date AND date < $1::date + interval '1 month'`
+**ช่วงวันที่** `?from=2026-11-01&to=2026-11-16` (นับรวมทั้ง 2 วัน / วันเดียวส่ง from = to / ไม่ส่งทั้งคู่ = ทั้งเดือนนี้) อ่านด้วย `helpers.DateRangeParams(c)` ได้ `utils.DateRange` ไปใช้ใน SQL: `date BETWEEN $1::date AND $2::date` — ส่งไม่ครบ / ผิดรูปแบบ / from หลัง to / ยาวเกิน 366 วัน → 400 `date_range_invalid` (ผู้ใช้ขอ 2026-11-16 เปลี่ยนจากเลือกทีละเดือน `?month=` เป็นเลือกช่วงวันที่)
 รายละเอียด field ของทุก endpoint ดูใน Swagger (`docs/openapi.yaml`)
 
 ### โหลดทีละหน้า (pagination) — ผู้ใช้ขอ 2026-11-02 "ส่งทีละ 20 เลื่อนลงแล้วโหลดเพิ่ม"
@@ -265,7 +265,7 @@ endpoint ที่เขียนว่า **เฉพาะเจ้าขอ�
 - **ไม่ส่ง limit = ทั้งหมดเหมือนเดิม** (หน้าขาย / คำนวณต้นทุน / ออกเอกสาร / AI ยังต้องใช้สินค้าทั้งหมด) — SQL `LIMIT NULLIF($n::int, 0) OFFSET $m` (LIMIT NULL = ไม่จำกัด) / ยกเว้นประวัติสต็อก ไม่ส่ง = ล่าสุด 200 (`movementDefaultLimit`)
 - ไม่ส่งจำนวนทั้งหมดกลับมา: ได้ครบตาม limit = อาจยังมีอีก / ได้น้อยกว่า = หมดแล้ว (หน้าเว็บขอหน้าต่อไปเมื่อเลื่อนใกล้ล่างสุด)
 - ทุกรายการ ORDER BY ต่อท้ายด้วย `id` → ลำดับตายตัว โหลดทีละหน้าไม่ซ้ำ ไม่ข้าม (เช่น ชื่อซ้ำกัน / เวลาเดียวกัน)
-- ใช้กับ: `/products`, `/product-categories`, `/stock/movements`, `/transactions`, `/invoices` (สองตัวหลังต่อเดือน + `month`)
+- ใช้กับ: `/products`, `/product-categories`, `/stock/movements`, `/transactions`, `/invoices` (สองตัวหลังใช้คู่กับ `from` / `to`)
 - **สินค้า**: ค้นหา / กรองย้ายมาทำที่ API (เดิมหน้าเว็บโหลดทั้งหมดแล้วกรองเอง) — `product.ListFilter`: `q` ค้นจากชื่อ / รหัส / หมวด / รายละเอียด / ค่าในช่องข้อมูลเพิ่มเติม (`ILIKE`, `jsonb_each_text`, ตัวอักษรพิเศษ `\ % _` ค้นเป็นตัวอักษรธรรมดา — `likePattern`), `category_id`, `kind` = `sale` / `material` (ผิด → 400 `product_kind_invalid`), `low=true` = นับสต็อกและคงเหลือ ≤ ขั้นต่ำ / `GET /products/counts` นับทั้งร้าน (ไม่สนตัวกรอง) ไว้ทำตัวเลขบนแท็บ
 - ลองกับสำเนา DB จริงแล้ว 20/20 (แบ่งหน้าต่อกันครบไม่ซ้ำ, counts ตรง, กรองแต่ละแบบ, ค้นไทย / อังกฤษไม่สนตัวพิมพ์, `%` ไม่ใช่ทุกอย่าง, ทุกรายการแบ่งหน้าตรงกับแบบไม่แบ่ง)
 
@@ -284,7 +284,8 @@ endpoint ที่เขียนว่า **เฉพาะเจ้าขอ�
 }
 ```
 
-- อีเมลไม่สนตัวพิมพ์เล็ก / ใหญ่ และตัดช่องว่างหน้า-หลังให้ (เก็บใน DB เป็นตัวเล็กเสมอ)
+- ช่อง `email` กรอกได้ทั้ง **อีเมล หรือชื่อผู้ใช้** (เช่น `admin1234`) — เก็บใน column `email` เดียวกัน ไม่มี column แยก
+- อีเมล / ชื่อผู้ใช้ไม่สนตัวพิมพ์เล็ก / ใหญ่ และตัดช่องว่างหน้า-หลังให้ (เก็บใน DB เป็นตัวเล็กเสมอ)
 - error: 400 `invalid_json` / `email_required` / `password_required`, 401 `invalid_credentials` (อีเมลไม่มี หรือรหัสผิด ตอบเหมือนกัน), 403 `user_disabled` (รหัสถูก แต่เจ้าของร้านปิดบัญชีไว้ — รหัสผิดยังได้ 401 เสมอ ไม่บอกว่าบัญชีถูกปิด)
 
 `GET /api/v1/auth/me` — header `Authorization: Bearer <token>`
@@ -304,7 +305,8 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 - `active = false` = ปิดบัญชี: login ไม่ได้ (403 `user_disabled`) และ token เดิมใช้ไม่ได้ทันที (401) / ข้อมูลที่เคยบันทึกยังอยู่ (ไม่มีลบผู้ใช้ ใช้ปิดบัญชีแทน)
 - **ร้านต้องมีเจ้าของที่ใช้งานได้อย่างน้อย 1 คน:** เปลี่ยน role / ปิดบัญชีเจ้าของคนสุดท้าย → 409 `user_last_owner` (ล็อกแถวเจ้าของทุกคน `FOR UPDATE` ก่อนนับ กันเจ้าของ 2 คนปลดกันพร้อมกันจนไม่เหลือใคร — `user/repository.go` → `Update`)
 - รหัสผ่านอย่างน้อย 6 ตัวอักษร (นับเป็นตัวอักษร ภาษาไทย 1 ตัว = 1) เก็บแบบ bcrypt / ไม่มี `password_hash` ออกไปใน JSON เด็ดขาด
-- อีเมลเก็บเป็นตัวเล็ก ตัดช่องว่าง / ซ้ำ → 409 `user_email_taken` / เจ้าของร้านแก้อีเมลไม่ได้ (ใช้ login)
+- ช่อง `email` = ชื่อที่ใช้ login: อีเมล หรือชื่อผู้ใช้ก็ได้ (`utils.IsUsername`: 3–50 ตัว a-z 0-9 `.` `_` `-` เช่น `admin1234`) ไม่ใช่ทั้งสองแบบ → 400 `user_email_invalid`
+- อีเมล / ชื่อผู้ใช้เก็บเป็นตัวเล็ก ตัดช่องว่าง / ซ้ำ → 409 `user_email_taken` / เจ้าของร้านแก้ทีหลังไม่ได้ (ใช้ login)
 - รูปโปรไฟล์เก็บใน DB แบบเดียวกับรูปสินค้า: `avatar_version` = เวลาที่เปลี่ยนรูป (มิลลิวินาที) ใส่ใน URL `?v=` → browser โหลดรูปใหม่ / 0 = ไม่มีรูป
 - error อื่น: 400 `user_email_invalid` / `user_name_required` / `user_name_too_long` / `user_role_invalid` / `password_too_short` / `password_current_required` / `password_current_invalid` / `avatar_required` / `avatar_too_large` / `avatar_type_invalid`, 404 `user_not_found` / `avatar_not_found`
 
@@ -346,15 +348,16 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 ### รายละเอียด ภาพรวมแบบละเอียด + AI (ทำแล้ว)
 
 **ภาพรวม** (`GET /dashboard`) เพิ่ม `sales`, `previous`, `monthly_trend`, `daily_sales`, `previous_daily_sales`, `top_products`, `category_sales`, `expense_by_category`, `stock`, `market` (field เดิมยังอยู่ แอปเก่าใช้ได้)
-- แต่ละเดือนใน `monthly_trend` / `previous` มี `bills` (จำนวนเอกสารขาย) และ `gross_profit` ด้วย → หน้าเว็บคิด % เทียบเดือนก่อนได้ทุกตัว
-- `previous_daily_sales` = ยอดขายรายวันของเดือนก่อน (ไว้วาดเส้นเทียบ) — เดือนก่อนคิดด้วย `previousMonthStart` (ม.ค. → ธ.ค. ปีก่อน)
+- แต่ละเดือนใน `monthly_trend` / `previous` มี `bills` (จำนวนเอกสารขาย) และ `gross_profit` ด้วย → หน้าเว็บคิด % เทียบช่วงก่อนได้ทุกตัว
+- **ช่วงก่อนหน้า** (`previous`, `previous_daily_sales`, `previous_from` / `previous_to`) คิดด้วย `utils.PreviousRange`: เลือกทั้งเดือนพอดี → เดือนก่อนทั้งเดือน (พ.ย. → ต.ค.) / นอกนั้น → ช่วงที่ยาวเท่ากันก่อนหน้าติดกัน (1–15 พ.ย. → 17–31 ต.ค.) — ผู้ใช้เลือก 2026-11-16
+- `monthly_trend` = ทีละเดือนเต็ม ย้อนหลัง 6 เดือน จบที่เดือนของวัน `to` (`trendMonths`)
 
 - ยอดขาย = **ก่อน VAT หลังหักส่วนลด** (`invoices.subtotal`) — เงินที่ร้านได้จริง ใช้คิดกำไร
 - ยอดของแต่ละบรรทัด (สินค้าขายดี / ตามหมวด) = ยอดบรรทัด × (`subtotal` ÷ `items_total`) → แบ่งส่วนลดและ VAT ตามสัดส่วน
 - ต้นทุนของที่ขาย = จำนวน × `invoice_items.cost_price` (ต้นทุน **ณ วันที่ขาย** เก็บไว้ตอนออกใบ — แก้ต้นทุนสินค้าทีหลัง กำไรเดือนเก่าไม่เปลี่ยน)
 - กำไรขั้นต้น = ยอดขาย − ต้นทุนของที่ขาย, margin = กำไร ÷ ยอดขาย × 100 (`dashboard/logic.go`)
 - เทียบราคาตลาด: ใช้ราคาที่ลูกค้าจ่าย (ร้านจด VAT ที่ตั้งราคาไม่รวม VAT → บวก VAT ก่อน) เทียบกับช่วงราคาปลีกจากการเช็คครั้งล่าสุด → `below` / `within` / `above` / `unknown`
-- % เทียบเดือนก่อน Flutter คิดเอง จาก `previous`
+- % เทียบช่วงก่อน Flutter คิดเอง จาก `previous`
 
 **AI** (`features/ai`) มี 2 ตัว เลือกให้เองทุกคำขอ (`pickProvider` ใน `ai/assistant.go`) ตามลำดับ:
 
@@ -692,7 +695,7 @@ productHandler.RegisterRoutes(api)
 | รายรับจากใบกำกับ | แก้ / ลบตรง ๆ ไม่ได้ ต้องยกเลิกใบกำกับ |
 | ลบสินค้า | ถ้าเคยอยู่ในใบกำกับแล้ว ลบไม่ได้ → 409 `product_in_use` |
 | เจ้าของร้าน | ต้องมีเจ้าของที่ใช้งานได้อย่างน้อย 1 คนเสมอ → ปลด / ปิดบัญชีเจ้าของคนสุดท้าย 409 `user_last_owner` / ไม่มีลบผู้ใช้ ใช้ปิดบัญชีแทน (ข้อมูลเก่าไม่หาย) |
-| รายได้ / กำไร | **รายได้** = ยอดขายก่อน VAT หลังหักส่วนลด (เอกสารขายที่ไม่ยกเลิก) + รายรับที่บันทึกเอง (ไม่มี `invoice_id`) / **กำไรขั้นต้น** = ยอดขาย − ต้นทุนสินค้าที่ขาย (`invoice_items.cost_price` ณ วันที่ขาย) / **กำไรสุทธิ** = รายได้ − ต้นทุนสินค้าที่ขาย − รายจ่าย **ไม่รวมหมวดซื้อวัตถุดิบ** (`material` คิดอยู่ในต้นทุนสินค้าแล้ว ไม่หักซ้ำ — ผู้ใช้เลือก 2026-11-01) — คิดที่ `transaction.NewSummary` + SQL `transaction.MonthAmountsSQL` ตัวเดียว หน้ารายรับ-รายจ่าย / ภาพรวม / กราฟ 6 เดือนใช้ร่วมกัน / `income` / `expense` = เงินเข้า-ออกตามที่บันทึก (รายรับจากเอกสารขายรวม VAT) **ไม่ใช่กำไร** |
+| รายได้ / กำไร | **รายได้** = ยอดขายก่อน VAT หลังหักส่วนลด (เอกสารขายที่ไม่ยกเลิก) + รายรับที่บันทึกเอง (ไม่มี `invoice_id`) / **กำไรขั้นต้น** = ยอดขาย − ต้นทุนสินค้าที่ขาย (`invoice_items.cost_price` ณ วันที่ขาย) / **กำไรสุทธิ** = รายได้ − ต้นทุนสินค้าที่ขาย − รายจ่าย **ไม่รวมหมวดซื้อวัตถุดิบ** (`material` คิดอยู่ในต้นทุนสินค้าแล้ว ไม่หักซ้ำ — ผู้ใช้เลือก 2026-11-01) — คิดที่ `transaction.NewSummary` + SQL `transaction.AmountsSQL` ตัวเดียว หน้ารายรับ-รายจ่าย / ภาพรวม / กราฟ 6 เดือนใช้ร่วมกัน / `income` / `expense` = เงินเข้า-ออกตามที่บันทึก (รายรับจากเอกสารขายรวม VAT) **ไม่ใช่กำไร** |
 
 ---
 

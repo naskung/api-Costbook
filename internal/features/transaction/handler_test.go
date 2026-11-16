@@ -25,21 +25,21 @@ const (
 
 // fakeRepository ฐานข้อมูลปลอม ใช้แทน Postgres ตอน test
 type fakeRepository struct {
-	transactions  []Transaction
-	gotMonthStart string
-	gotPage       [2]int
-	amounts       MonthAmounts
-	err           error // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
+	transactions []Transaction
+	gotPeriod    utils.DateRange
+	gotPage      [2]int
+	amounts      Amounts
+	err          error // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
 }
 
-func (f *fakeRepository) List(ctx context.Context, monthStart string, limit, offset int) ([]Transaction, error) {
-	f.gotMonthStart = monthStart
+func (f *fakeRepository) List(ctx context.Context, period utils.DateRange, limit, offset int) ([]Transaction, error) {
+	f.gotPeriod = period
 	f.gotPage = [2]int{limit, offset}
 	return f.transactions, f.err
 }
 
-func (f *fakeRepository) MonthAmounts(ctx context.Context, monthStart string) (MonthAmounts, error) {
-	f.gotMonthStart = monthStart
+func (f *fakeRepository) Amounts(ctx context.Context, period utils.DateRange) (Amounts, error) {
+	f.gotPeriod = period
 	return f.amounts, f.err
 }
 
@@ -94,13 +94,15 @@ func sendRequest(router *gin.Engine, method, path, body string) *httptest.Respon
 
 func TestHandler_List(t *testing.T) {
 	tests := []struct {
-		name           string
-		path           string
-		wantStatus     int
-		wantMonthStart string
+		name       string
+		path       string
+		wantStatus int
+		wantPeriod utils.DateRange
 	}{
-		{"month=2026-10 ได้รายการของเดือนนั้น", "/api/v1/transactions?month=2026-10", http.StatusOK, "2026-10-01"},
-		{"month ผิดรูปแบบ ได้ 400", "/api/v1/transactions?month=abc", http.StatusBadRequest, ""},
+		{"from–to ได้รายการของช่วงนั้น", "/api/v1/transactions?from=2026-10-05&to=2026-10-20", http.StatusOK, utils.DateRange{From: "2026-10-05", To: "2026-10-20"}},
+		{"วันเดียว", "/api/v1/transactions?from=2026-10-05&to=2026-10-05", http.StatusOK, utils.DateRange{From: "2026-10-05", To: "2026-10-05"}},
+		{"from อยู่หลัง to ได้ 400", "/api/v1/transactions?from=2026-10-20&to=2026-10-05", http.StatusBadRequest, utils.DateRange{}},
+		{"รูปแบบผิด ได้ 400", "/api/v1/transactions?from=abc&to=2026-10-05", http.StatusBadRequest, utils.DateRange{}},
 	}
 
 	for _, tt := range tests {
@@ -110,8 +112,8 @@ func TestHandler_List(t *testing.T) {
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, ต้องได้ %d", rec.Code, tt.wantStatus)
 			}
-			if repo.gotMonthStart != tt.wantMonthStart {
-				t.Errorf("monthStart = %q, ต้องได้ %q", repo.gotMonthStart, tt.wantMonthStart)
+			if repo.gotPeriod != tt.wantPeriod {
+				t.Errorf("period = %+v, ต้องได้ %+v", repo.gotPeriod, tt.wantPeriod)
 			}
 		})
 	}
@@ -119,7 +121,7 @@ func TestHandler_List(t *testing.T) {
 
 func TestHandler_List_Page(t *testing.T) {
 	repo := &fakeRepository{}
-	sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/transactions?month=2026-10&limit=20&offset=20", "")
+	sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/transactions?from=2026-10-01&to=2026-10-31&limit=20&offset=20", "")
 	if repo.gotPage != [2]int{20, 20} {
 		t.Errorf("ต้องส่ง limit / offset ต่อให้ repository ได้ %v", repo.gotPage)
 	}
@@ -139,15 +141,15 @@ func TestHandler_List_RequiresLogin(t *testing.T) {
 }
 
 func TestHandler_Summary(t *testing.T) {
-	repo := &fakeRepository{amounts: MonthAmounts{Income: 1070, Expense: 250.5, Sales: 1000, CostOfSales: 600}}
-	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/transactions/summary?month=2026-10", "")
+	repo := &fakeRepository{amounts: Amounts{Income: 1070, Expense: 250.5, Sales: 1000, CostOfSales: 600}}
+	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/transactions/summary?from=2026-10-01&to=2026-10-15", "")
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, ต้องได้ %d", rec.Code, http.StatusOK)
 	}
 	var got Summary
 	json.NewDecoder(rec.Body).Decode(&got)
-	want := NewSummary("2026-10", repo.amounts)
+	want := NewSummary(utils.DateRange{From: "2026-10-01", To: "2026-10-15"}, repo.amounts)
 	if want.Profit != 149.5 {
 		t.Fatalf("กำไรสุทธิที่คาดไว้ = %v, ต้องได้ 1,000 − 600 − 250.5 = 149.5", want.Profit)
 	}

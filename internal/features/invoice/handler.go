@@ -27,11 +27,11 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 	api.PUT("/invoices/:id/delivery", authRequired, h.UpdateDelivery)
 }
 
-// List GET /api/v1/invoices?month=2026-10&limit=20&offset=0 (ไม่ส่ง month = เดือนนี้ / ไม่ส่ง limit = ทั้งเดือน)
+// List GET /api/v1/invoices?from=2026-11-01&to=2026-11-16&limit=20&offset=0
+// ไม่ส่ง from / to = ทั้งเดือนนี้ / ไม่ส่ง limit = ทั้งช่วง
 func (h *Handler) List(c *gin.Context) {
-	monthStart, ok := helpers.MonthStart(c)
+	period, ok := helpers.DateRangeParams(c)
 	if !ok {
-		helpers.WriteError(c, http.StatusBadRequest, "month_invalid")
 		return
 	}
 	limit, offset, ok := helpers.PageParams(c)
@@ -39,7 +39,7 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	invoices, err := h.repo.List(c.Request.Context(), monthStart, limit, offset)
+	invoices, err := h.repo.List(c.Request.Context(), period, limit, offset)
 	if err != nil {
 		helpers.ServerError(c, err)
 		return

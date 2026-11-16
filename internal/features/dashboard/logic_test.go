@@ -2,10 +2,10 @@ package dashboard
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/naskung/api-Costbook/internal/features/transaction"
+	"github.com/naskung/api-Costbook/internal/utils"
 )
 
 func TestPercentOf(t *testing.T) {
@@ -111,33 +111,9 @@ func TestMarketPositionOf(t *testing.T) {
 	}
 }
 
-func TestPreviousMonth(t *testing.T) {
-	trend := []MonthTotals{{Month: "2026-09", Income: 500}, {Month: "2026-10", Income: 900}}
-	if got := previousMonth(trend); got.Month != "2026-09" {
-		t.Errorf("ได้ %+v ต้องได้เดือน 2026-09", got)
-	}
-	if got := previousMonth(trend[:1]); got.Month != "" {
-		t.Errorf("มีเดือนเดียว ได้ %+v ต้องได้ค่าว่าง", got)
-	}
-}
-
-func TestPreviousMonthStart(t *testing.T) {
-	tests := map[string]string{
-		"2026-10-01": "2026-09-01",
-		"2026-01-01": "2025-12-01",
-		"2026-03-01": "2026-02-01",
-		"abc":        "abc",
-	}
-	for input, want := range tests {
-		if got := previousMonthStart(input); got != want {
-			t.Errorf("previousMonthStart(%q) = %q ต้องได้ %q", input, got, want)
-		}
-	}
-}
-
 func TestMonthTotals(t *testing.T) {
-	amounts := transaction.MonthAmounts{Income: 1070, Expense: 1500, Sales: 1000, CostOfSales: 600, MaterialExpense: 1250}
-	got := monthTotals("2026-11", 3, amounts)
+	amounts := transaction.Amounts{Income: 1070, Expense: 1500, Sales: 1000, CostOfSales: 600, MaterialExpense: 1250}
+	got := monthTotals(utils.DateRange{From: "2026-11-01", To: "2026-11-30"}, 3, amounts)
 	want := MonthTotals{
 		Month: "2026-11", Income: 1070, Expense: 1500, Profit: 150, NetSales: 1000, Bills: 3, GrossProfit: 400,
 		Revenue: 1000, CostOfSales: 600, OperatingExpense: 250,
@@ -147,13 +123,22 @@ func TestMonthTotals(t *testing.T) {
 	}
 }
 
-func TestTrendMonthStarts(t *testing.T) {
-	got := trendMonthStarts("2026-02-01", 6)
-	want := []string{"2025-09-01", "2025-10-01", "2025-11-01", "2025-12-01", "2026-01-01", "2026-02-01"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("ได้ %v, ต้องได้ %v (ข้ามปีได้ เรียงเก่า → ใหม่)", got, want)
+func TestTrendMonths(t *testing.T) {
+	got := trendMonths("2026-02-14", 3)
+	want := []utils.DateRange{
+		{From: "2025-12-01", To: "2025-12-31"},
+		{From: "2026-01-01", To: "2026-01-31"},
+		{From: "2026-02-01", To: "2026-02-28"},
 	}
-	if one := trendMonthStarts("ผิด", 6); len(one) != 1 {
-		t.Errorf("วันที่ผิด ได้ %v, ต้องได้เดือนเดียว", one)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ได้ %v, ต้องได้ %v (ข้ามปีได้ เรียงเก่า → ใหม่ ทั้งเดือน)", got, want)
+	}
+
+	endOfMonth := trendMonths("2026-03-31", 2)
+	if endOfMonth[0].From != "2026-02-01" {
+		t.Errorf("วันที่ 31 ย้อนไปเดือนที่มี 28 วัน ได้ %v, ต้องได้ ก.พ.", endOfMonth)
+	}
+	if wrong := trendMonths("ผิด", 6); len(wrong) != 0 {
+		t.Errorf("วันที่ผิด ได้ %v, ต้องได้ว่าง", wrong)
 	}
 }

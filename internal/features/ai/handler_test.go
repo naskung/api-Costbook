@@ -121,10 +121,10 @@ func (fakeShop) Product(ctx context.Context, id string) (product.Product, error)
 func (fakeShop) CostSheet(ctx context.Context, productID string) (cost.CostSheet, error) {
 	return cost.CostSheet{ProductID: productID}, nil
 }
-func (fakeShop) Dashboard(ctx context.Context, monthStart string) (dashboard.Dashboard, error) {
-	return dashboard.Dashboard{Month: monthStart[:7]}, nil
+func (fakeShop) Dashboard(ctx context.Context, period utils.DateRange) (dashboard.Dashboard, error) {
+	return dashboard.Dashboard{From: period.From, To: period.To}, nil
 }
-func (fakeShop) Transactions(ctx context.Context, monthStart string) ([]transaction.Transaction, error) {
+func (fakeShop) Transactions(ctx context.Context, period utils.DateRange) ([]transaction.Transaction, error) {
 	return []transaction.Transaction{}, nil
 }
 

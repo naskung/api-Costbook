@@ -25,11 +25,11 @@ func (h *Handler) RegisterRoutes(api gin.IRouter, authRequired gin.HandlerFunc) 
 	api.DELETE("/transactions/:id", authRequired, h.Delete)
 }
 
-// List GET /api/v1/transactions?month=2026-10&limit=20&offset=0 (ไม่ส่ง month = เดือนนี้ / ไม่ส่ง limit = ทั้งเดือน)
+// List GET /api/v1/transactions?from=2026-11-01&to=2026-11-16&limit=20&offset=0
+// ไม่ส่ง from / to = ทั้งเดือนนี้ / ไม่ส่ง limit = ทั้งช่วง
 func (h *Handler) List(c *gin.Context) {
-	monthStart, ok := helpers.MonthStart(c)
+	period, ok := helpers.DateRangeParams(c)
 	if !ok {
-		helpers.WriteError(c, http.StatusBadRequest, "month_invalid")
 		return
 	}
 	limit, offset, ok := helpers.PageParams(c)
@@ -37,7 +37,7 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	transactions, err := h.repo.List(c.Request.Context(), monthStart, limit, offset)
+	transactions, err := h.repo.List(c.Request.Context(), period, limit, offset)
 	if err != nil {
 		helpers.ServerError(c, err)
 		return
@@ -45,20 +45,19 @@ func (h *Handler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, transactions)
 }
 
-// Summary GET /api/v1/transactions/summary?month=2026-10
+// Summary GET /api/v1/transactions/summary?from=2026-11-01&to=2026-11-16
 func (h *Handler) Summary(c *gin.Context) {
-	monthStart, ok := helpers.MonthStart(c)
+	period, ok := helpers.DateRangeParams(c)
 	if !ok {
-		helpers.WriteError(c, http.StatusBadRequest, "month_invalid")
 		return
 	}
 
-	amounts, err := h.repo.MonthAmounts(c.Request.Context(), monthStart)
+	amounts, err := h.repo.Amounts(c.Request.Context(), period)
 	if err != nil {
 		helpers.ServerError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, NewSummary(monthStart[:7], amounts)) // "2026-10-01" → "2026-10"
+	c.JSON(http.StatusOK, NewSummary(period, amounts))
 }
 
 // Create POST /api/v1/transactions

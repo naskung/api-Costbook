@@ -1,6 +1,9 @@
 package utils
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestIsTaxID(t *testing.T) {
 	tests := []struct {
@@ -70,6 +73,32 @@ func TestIsEmail(t *testing.T) {
 	for _, tt := range tests {
 		if got := IsEmail(tt.value); got != tt.want {
 			t.Errorf("IsEmail(%q) = %v ต้องได้ %v", tt.value, got, tt.want)
+		}
+	}
+}
+
+func TestIsUsername(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{"admin1234", true},
+		{"somchai.j", true},
+		{"staff_01", true},
+		{"ab-c", true},
+		{"abc", true},
+		{"ab", false},
+		{strings.Repeat("a", 50), true},
+		{strings.Repeat("a", 51), false},
+		{"", false},
+		{"Admin", false},
+		{"ad min", false},
+		{"staff@costbook.com", false},
+		{"สมชาย", false},
+	}
+	for _, tt := range tests {
+		if got := IsUsername(tt.value); got != tt.want {
+			t.Errorf("IsUsername(%q) = %v ต้องได้ %v", tt.value, got, tt.want)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/naskung/api-Costbook/internal/utils"
 )
 
 // ErrNotFound ใช้บอก handler ว่าไม่เจอรายการ (handler จะตอบ 404)
@@ -15,11 +16,11 @@ var ErrNotFound = errors.New("transaction not found")
 var ErrFromInvoice = errors.New("transaction comes from an invoice")
 
 // Repository คือรายการคำสั่งที่คุยกับ DB
-// monthStart = วันแรกของเดือน เช่น "2026-10-01"
+// period = ช่วงวันที่ที่เลือก เช่น 2026-11-01 ถึง 2026-11-16 (นับรวมทั้ง 2 วัน)
 type Repository interface {
-	// limit / offset = โหลดทีละหน้า (limit 0 = ทั้งเดือน)
-	List(ctx context.Context, monthStart string, limit, offset int) ([]Transaction, error)
-	MonthAmounts(ctx context.Context, monthStart string) (MonthAmounts, error)
+	// limit / offset = โหลดทีละหน้า (limit 0 = ทั้งช่วง)
+	List(ctx context.Context, period utils.DateRange, limit, offset int) ([]Transaction, error)
+	Amounts(ctx context.Context, period utils.DateRange) (Amounts, error)
 	Create(ctx context.Context, req TransactionRequest) (Transaction, error)
 	Update(ctx context.Context, id string, req TransactionRequest) (Transaction, error)
 	Delete(ctx context.Context, id string) error
@@ -41,11 +42,11 @@ const transactionSelect = `
 	LEFT JOIN invoices i ON i.id = t.invoice_id`
 
 // List ล่าสุดก่อน / id ต่อท้ายให้ลำดับตายตัว (โหลดทีละหน้าไม่ซ้ำ ไม่ข้าม) / LIMIT NULL = ไม่จำกัด
-func (r *PostgresRepository) List(ctx context.Context, monthStart string, limit, offset int) ([]Transaction, error) {
+func (r *PostgresRepository) List(ctx context.Context, period utils.DateRange, limit, offset int) ([]Transaction, error) {
 	rows, err := r.db.Query(ctx, transactionSelect+`
-		WHERE t.date >= $1::date AND t.date < $1::date + interval '1 month'
+		WHERE t.date BETWEEN $1::date AND $2::date
 		ORDER BY t.date DESC, t.created_at DESC, t.id
-		LIMIT NULLIF($2::int, 0) OFFSET $3`, monthStart, limit, offset)
+		LIMIT NULLIF($3::int, 0) OFFSET $4`, period.From, period.To, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -62,31 +63,31 @@ func (r *PostgresRepository) List(ctx context.Context, monthStart string, limit,
 	return transactions, rows.Err()
 }
 
-// MonthAmountsSQL ยอดของ 1 เดือนที่ใช้คิดกำไร ($1 = วันแรกของเดือน) เรียงตรงกับ MonthAmounts
+// AmountsSQL ยอดของช่วงวันที่ที่ใช้คิดกำไร ($1 = วันแรก, $2 = วันสุดท้าย นับรวม) เรียงตรงกับ Amounts
 // income / expense / รายรับที่บันทึกเอง (ไม่มี invoice_id) / ซื้อวัตถุดิบ / ยอดขายก่อน VAT / ต้นทุนสินค้าที่ขาย
 // หน้าภาพรวมใช้ SQL ตัวนี้ด้วย
-const MonthAmountsSQL = `
+const AmountsSQL = `
 	SELECT
 		COALESCE(SUM(t.amount) FILTER (WHERE t.type = 'income'), 0),
 		COALESCE(SUM(t.amount) FILTER (WHERE t.type = 'expense'), 0),
 		COALESCE(SUM(t.amount) FILTER (WHERE t.type = 'income' AND t.invoice_id IS NULL), 0),
 		COALESCE(SUM(t.amount) FILTER (WHERE t.type = 'expense' AND t.category = '` + CategoryMaterial + `'), 0),
 		COALESCE((SELECT SUM(i.subtotal) FROM invoices i
-			WHERE i.status = 'issued' AND i.issue_date >= $1::date AND i.issue_date < $1::date + interval '1 month'), 0),
+			WHERE i.status = 'issued' AND i.issue_date BETWEEN $1::date AND $2::date), 0),
 		COALESCE((SELECT SUM(ii.quantity * ii.cost_price) FROM invoice_items ii JOIN invoices i ON i.id = ii.invoice_id
-			WHERE i.status = 'issued' AND i.issue_date >= $1::date AND i.issue_date < $1::date + interval '1 month'), 0)
+			WHERE i.status = 'issued' AND i.issue_date BETWEEN $1::date AND $2::date), 0)
 	FROM transactions t
-	WHERE t.date >= $1::date AND t.date < $1::date + interval '1 month'`
+	WHERE t.date BETWEEN $1::date AND $2::date`
 
-// ScanMonthAmounts อ่านผลของ MonthAmountsSQL
-func ScanMonthAmounts(row pgx.Row) (MonthAmounts, error) {
-	var a MonthAmounts
+// ScanAmounts อ่านผลของ AmountsSQL
+func ScanAmounts(row pgx.Row) (Amounts, error) {
+	var a Amounts
 	err := row.Scan(&a.Income, &a.Expense, &a.OtherIncome, &a.MaterialExpense, &a.Sales, &a.CostOfSales)
 	return a, err
 }
 
-func (r *PostgresRepository) MonthAmounts(ctx context.Context, monthStart string) (MonthAmounts, error) {
-	return ScanMonthAmounts(r.db.QueryRow(ctx, MonthAmountsSQL, monthStart))
+func (r *PostgresRepository) Amounts(ctx context.Context, period utils.DateRange) (Amounts, error) {
+	return ScanAmounts(r.db.QueryRow(ctx, AmountsSQL, period.From, period.To))
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, req TransactionRequest) (Transaction, error) {

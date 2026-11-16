@@ -27,7 +27,7 @@ type User struct {
 	PasswordHash  string `json:"-"`
 }
 
-// LoginRequest ข้อมูลที่รับมาตอน login
+// LoginRequest ข้อมูลที่รับมาตอน login — Email = อีเมล หรือชื่อผู้ใช้ก็ได้
 type LoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`

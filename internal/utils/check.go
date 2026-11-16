@@ -45,3 +45,17 @@ func IsEmail(value string) bool {
 	dot := strings.LastIndex(domain, ".")
 	return dot > 0 && dot < len(domain)-1
 }
+
+// IsUsername ชื่อผู้ใช้ (ใช้ login แทนอีเมลได้) ยาว 3–50 ตัว
+// ใช้ได้แค่ a-z ตัวเล็ก, 0-9, จุด, ขีดล่าง, ขีดกลาง เช่น "admin1234", "somchai.j"
+func IsUsername(value string) bool {
+	if len(value) < 3 || len(value) > 50 {
+		return false
+	}
+	for _, char := range value {
+		if !strings.ContainsRune("abcdefghijklmnopqrstuvwxyz0123456789._-", char) {
+			return false
+		}
+	}
+	return true
+}

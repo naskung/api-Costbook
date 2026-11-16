@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.13.0
+  version: 0.14.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -66,9 +66,10 @@ paths:
   /auth/login:
     post:
       tags: [auth]
-      summary: login ด้วยอีเมล + รหัสผ่าน
+      summary: login ด้วยอีเมล หรือชื่อผู้ใช้ + รหัสผ่าน
       description: |
-        - อีเมลไม่สนตัวพิมพ์เล็ก / ใหญ่ และตัดช่องว่างหน้า-หลังให้
+        - ช่อง `email` กรอกได้ทั้งอีเมล (`admin@costbook.com`) หรือชื่อผู้ใช้ (`admin1234`)
+        - อีเมล / ชื่อผู้ใช้ไม่สนตัวพิมพ์เล็ก / ใหญ่ และตัดช่องว่างหน้า-หลังให้
         - อีเมลไม่มีในระบบ หรือรหัสผ่านผิด ได้ `invalid_credentials` เหมือนกัน (คนเดาจะไม่รู้ว่าอีเมลนี้มีจริงไหม)
         - token มีอายุ 7 วัน
       operationId: login
@@ -1376,17 +1377,18 @@ paths:
   /transactions:
     get:
       tags: [transaction]
-      summary: รายรับ-รายจ่ายของเดือน (ล่าสุดอยู่บน)
+      summary: รายรับ-รายจ่ายของช่วงวันที่ (ล่าสุดอยู่บน)
       operationId: listTransactions
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/Month"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Offset"
       responses:
         "200":
-          description: รายการของเดือน
+          description: รายการของช่วงวันที่
           content:
             application/json:
               schema:
@@ -1394,7 +1396,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/Transaction"
         "400":
-          $ref: "#/components/responses/MonthOrPageInvalid"
+          $ref: "#/components/responses/DateRangeOrPageInvalid"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -1428,12 +1430,13 @@ paths:
   /transactions/summary:
     get:
       tags: [transaction]
-      summary: สรุปรายรับ รายจ่าย กำไร ของเดือน
+      summary: สรุปรายรับ รายจ่าย กำไร ของช่วงวันที่
       operationId: transactionSummary
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/Month"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
       responses:
         "200":
           description: ยอดสรุป
@@ -1442,7 +1445,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/TransactionSummary"
         "400":
-          $ref: "#/components/responses/MonthInvalid"
+          $ref: "#/components/responses/DateRangeInvalid"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -1503,12 +1506,13 @@ paths:
   /invoices:
     get:
       tags: [invoice]
-      summary: เอกสารขายของเดือน (ล่าสุดอยู่บน)
+      summary: เอกสารขายของช่วงวันที่ (ล่าสุดอยู่บน)
       operationId: listInvoices
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/Month"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Offset"
       responses:
@@ -1521,7 +1525,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/InvoiceSummary"
         "400":
-          $ref: "#/components/responses/MonthOrPageInvalid"
+          $ref: "#/components/responses/DateRangeOrPageInvalid"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -1715,12 +1719,13 @@ paths:
   /dashboard:
     get:
       tags: [dashboard]
-      summary: ตัวเลขสรุปหน้าแรกของเดือน
+      summary: ตัวเลขสรุปหน้าแรกของช่วงวันที่
       operationId: getDashboard
       security:
         - bearerAuth: []
       parameters:
-        - $ref: "#/components/parameters/Month"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
       responses:
         "200":
           description: ตัวเลขสรุป
@@ -1729,7 +1734,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Dashboard"
         "400":
-          $ref: "#/components/responses/MonthInvalid"
+          $ref: "#/components/responses/DateRangeInvalid"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -1949,13 +1954,22 @@ components:
         type: integer
         minimum: 0
         example: 0
-    Month:
-      name: month
+    From:
+      name: from
       in: query
-      description: "เดือนที่ต้องการ รูปแบบ 2026-10 — ไม่ส่ง = เดือนนี้"
+      description: "วันแรกของช่วง รูปแบบ 2026-11-01 (นับรวมวันนี้) — ส่งคู่กับ to / ไม่ส่งทั้งคู่ = ทั้งเดือนนี้ / วันเดียว ส่ง from = to"
       schema:
         type: string
-        example: "2026-10"
+        format: date
+        example: "2026-11-01"
+    To:
+      name: to
+      in: query
+      description: "วันสุดท้ายของช่วง รูปแบบ 2026-11-16 (นับรวมวันนี้) — ต้องไม่ก่อน from และยาวรวมไม่เกิน 366 วัน"
+      schema:
+        type: string
+        format: date
+        example: "2026-11-16"
 
   responses:
     CategoryBadRequest:
@@ -2028,15 +2042,15 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
           example: { error: page_invalid }
-    MonthOrPageInvalid:
-      description: "month ผิดรูปแบบ (ต้องเป็น 2026-10) หรือ limit / offset ผิด"
+    DateRangeOrPageInvalid:
+      description: "from / to ผิด (ส่งไม่ครบ / รูปแบบผิด / from อยู่หลัง to / ยาวเกิน 366 วัน) หรือ limit / offset ผิด"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
           examples:
-            month_invalid:
-              value: { error: month_invalid }
+            date_range_invalid:
+              value: { error: date_range_invalid }
             page_invalid:
               value: { error: page_invalid }
     ProductListBadRequest:
@@ -2052,13 +2066,13 @@ components:
               value: { error: product_category_invalid }
             page_invalid:
               value: { error: page_invalid }
-    MonthInvalid:
-      description: "month ผิดรูปแบบ (ต้องเป็น 2026-10)"
+    DateRangeInvalid:
+      description: "from / to ผิด (ส่งไม่ครบ / รูปแบบผิด / from อยู่หลัง to / ยาวเกิน 366 วัน)"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
-          example: { error: month_invalid }
+          example: { error: date_range_invalid }
     ProductNotFound:
       description: ไม่มีสินค้านี้
       content:
@@ -2275,8 +2289,8 @@ components:
       properties:
         email:
           type: string
-          format: email
-          example: admin@costbook.com
+          description: อีเมล หรือชื่อผู้ใช้ก็ได้
+          example: admin1234
         password:
           type: string
           format: password
@@ -2299,7 +2313,7 @@ components:
       required: [id, email, first_name, last_name, role, active, avatar_version, created_at]
       properties:
         id: { type: string, format: uuid }
-        email: { type: string, format: email, example: staff@costbook.com }
+        email: { type: string, example: staff@costbook.com, description: "ชื่อที่ใช้ login: อีเมล หรือชื่อผู้ใช้" }
         first_name: { type: string, example: สมชาย }
         last_name: { type: string, example: ใจดี }
         role: { type: string, enum: [owner, manager, staff] }
@@ -2325,7 +2339,7 @@ components:
       type: object
       required: [email, first_name, role, password]
       properties:
-        email: { type: string, format: email, example: staff@costbook.com, description: "เก็บเป็นตัวเล็ก ห้ามซ้ำ" }
+        email: { type: string, example: staff@costbook.com, description: "ชื่อที่ใช้ login: อีเมล หรือชื่อผู้ใช้ (3–50 ตัว a-z 0-9 . _ - เช่น admin1234) เก็บเป็นตัวเล็ก ห้ามซ้ำ" }
         first_name: { type: string, example: สมชาย }
         last_name: { type: string, example: ใจดี }
         role: { type: string, enum: [owner, manager, staff] }
@@ -2356,7 +2370,7 @@ components:
           example: a00d265d-5466-4cba-aba7-005953ae30fc
         email:
           type: string
-          format: email
+          description: ชื่อที่ใช้ login (อีเมล หรือชื่อผู้ใช้)
           example: admin@costbook.com
         first_name:
           type: string
@@ -3030,11 +3044,10 @@ components:
         - **กำไรขั้นต้น** `gross_profit` = `sales` − ต้นทุนสินค้าที่ขาย (`cost_of_sales`, ต้นทุน ณ วันที่ขาย)
         - **กำไรสุทธิ** `profit` = `revenue` − `cost_of_sales` − `operating_expense` (รายจ่ายไม่รวมหมวดซื้อวัตถุดิบ เพราะคิดในต้นทุนสินค้าแล้ว)
         - `income` / `expense` = เงินเข้า / ออกตามที่บันทึก (รายรับจากเอกสารขายรวม VAT) — ไม่ใช่กำไร
-      required: [month, income, expense, sales, other_income, revenue, cost_of_sales, gross_profit, material_expense, operating_expense, profit]
+      required: [from, to, income, expense, sales, other_income, revenue, cost_of_sales, gross_profit, material_expense, operating_expense, profit]
       properties:
-        month:
-          type: string
-          example: "2026-11"
+        from: { type: string, format: date, example: "2026-11-01" }
+        to: { type: string, format: date, example: "2026-11-16" }
         income: { type: number, description: เงินเข้าทั้งหมดตามที่บันทึก, example: 1370 }
         expense: { type: number, description: เงินออกทั้งหมดตามที่บันทึก (รวมซื้อวัตถุดิบ), example: 1600 }
         sales: { type: number, description: ยอดขายก่อน VAT หลังหักส่วนลด (เอกสารขายที่ไม่ยกเลิก), example: 1000 }
@@ -3243,11 +3256,16 @@ components:
 
     Dashboard:
       type: object
-      required: [month, income, expense, profit, invoice_count, invoice_total, product_count, low_stock_count, low_stock]
+      required: [from, to, previous_from, previous_to, income, expense, profit, invoice_count, invoice_total, product_count, low_stock_count, low_stock]
       properties:
-        month:
+        from: { type: string, format: date, example: "2026-11-01" }
+        to: { type: string, format: date, example: "2026-11-15" }
+        previous_from:
           type: string
-          example: "2026-10"
+          format: date
+          example: "2026-10-17"
+          description: "ช่วงก่อนหน้าที่เอามาเทียบ (previous / previous_daily_sales): เลือกทั้งเดือนพอดี = เดือนก่อนทั้งเดือน / นอกนั้น = ช่วงที่ยาวเท่ากันก่อนหน้าติดกัน"
+        previous_to: { type: string, format: date, example: "2026-10-31" }
         income:
           type: number
           description: เงินเข้าตามที่บันทึก (ไม่ใช่กำไร)
@@ -3286,20 +3304,22 @@ components:
         sales:
           $ref: "#/components/schemas/SalesSummary"
         previous:
-          $ref: "#/components/schemas/MonthTotals"
+          description: ยอดของช่วงก่อนหน้า (previous_from ถึง previous_to)
+          allOf:
+            - $ref: "#/components/schemas/MonthTotals"
         monthly_trend:
           type: array
-          description: ย้อนหลัง 6 เดือน เรียงเก่า → ใหม่ (ตัวสุดท้าย = เดือนที่เลือก)
+          description: ทีละเดือน ย้อนหลัง 6 เดือน เรียงเก่า → ใหม่ (ตัวสุดท้าย = เดือนของวัน to)
           items:
             $ref: "#/components/schemas/MonthTotals"
         daily_sales:
           type: array
-          description: ยอดขายทุกวันของเดือน (วันที่ไม่ขาย = 0)
+          description: ยอดขายทุกวันในช่วง from ถึง to (วันที่ไม่ขาย = 0)
           items:
             $ref: "#/components/schemas/DailySales"
         previous_daily_sales:
           type: array
-          description: ยอดขายทุกวันของเดือนก่อน (ไว้วาดเส้นเทียบ)
+          description: ยอดขายทุกวันของช่วงก่อนหน้า (ไว้วาดเส้นเทียบ)
           items:
             $ref: "#/components/schemas/DailySales"
         top_products:

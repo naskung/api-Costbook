@@ -24,7 +24,8 @@ const (
 // fakeRepository ฐานข้อมูลปลอม เก็บช่องใน slice ใช้แทน Postgres ตอน test
 type fakeRepository struct {
 	fields []ProductField
-	err    error // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
+	layout []LayoutItem // ลำดับที่บันทึกล่าสุด (nil = ยังไม่เคยบันทึก ใช้ค่าเริ่มต้น)
+	err    error        // ใส่ค่านี้เมื่ออยากจำลองว่า DB พัง
 }
 
 func (f *fakeRepository) List(ctx context.Context) ([]ProductField, error) {
@@ -57,6 +58,33 @@ func (f *fakeRepository) Delete(ctx context.Context, id string) error {
 	if id != colorID {
 		return ErrNotFound
 	}
+	return nil
+}
+
+// Layout ลำดับช่องหลักตามค่าเริ่มต้น แล้วต่อด้วยช่องที่ร้านเพิ่ม (เหมือน DB จริงหลัง migration 000017)
+func (f *fakeRepository) Layout(ctx context.Context) ([]LayoutItem, error) {
+	if f.layout != nil || f.err != nil {
+		return f.layout, f.err
+	}
+	items := []LayoutItem{}
+	for i, block := range FormBlocks {
+		items = append(items, LayoutItem{Key: block, SortOrder: i + 1})
+	}
+	for i, field := range f.fields {
+		items = append(items, LayoutItem{Key: field.ID, SortOrder: len(FormBlocks) + i + 1})
+	}
+	return items, nil
+}
+
+// SaveLayout ช่องที่ส่งมาต้องครบพอดีเหมือน DB จริง (ช่องหลัก + ช่องที่มีอยู่) ไม่งั้น ErrLayoutInvalid
+func (f *fakeRepository) SaveLayout(ctx context.Context, items []LayoutItem) error {
+	if f.err != nil {
+		return f.err
+	}
+	if len(items) != len(FormBlocks)+len(f.fields) {
+		return ErrLayoutInvalid
+	}
+	f.layout = items
 	return nil
 }
 
@@ -152,6 +180,61 @@ func TestHandler_UpdateDelete(t *testing.T) {
 			rec := sendRequest(newTestRouter(&fakeRepository{}), tt.method, "/api/v1/product-fields/"+tt.id, `{"name":"วัสดุ","type":"text"}`)
 			if rec.Code != tt.wantStatus {
 				t.Errorf("status = %d, ต้องได้ %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandler_Layout(t *testing.T) {
+	repo := &fakeRepository{fields: []ProductField{{ID: colorID, Name: "สี", Type: "text"}}}
+	rec := sendRequest(newTestRouter(repo), http.MethodGet, "/api/v1/product-form-layout", "")
+
+	var got []LayoutItem
+	json.NewDecoder(rec.Body).Decode(&got)
+	if rec.Code != http.StatusOK || len(got) != 8 || got[0].Key != BlockImage || got[7].Key != colorID {
+		t.Errorf("ต้องได้ช่องหลัก 7 + ช่องที่ร้านเพิ่ม 1 เรียงตามลำดับ ได้ %d %+v", rec.Code, got)
+	}
+}
+
+// layoutBody ลำดับใหม่: ย้ายช่อง สี ขึ้นไปอยู่ใต้ชื่อสินค้า (เลข 3) ช่องหลักที่เหลือเลื่อนลง
+func layoutBody(extra string) string {
+	return `{"items":[{"key":"image","sort_order":1},{"key":"name","sort_order":2},{"key":"` + colorID + `","sort_order":3},` +
+		`{"key":"code_category","sort_order":4},{"key":"unit","sort_order":5},{"key":"prices","sort_order":6},` +
+		`{"key":"sale_stock","sort_order":7},{"key":"description","sort_order":8}` + extra + `]}`
+}
+
+func TestHandler_SaveLayout(t *testing.T) {
+	repo := &fakeRepository{fields: []ProductField{{ID: colorID, Name: "สี", Type: "text"}}}
+	rec := sendRequest(newTestRouter(repo), http.MethodPut, "/api/v1/product-form-layout", layoutBody(""))
+
+	var got []LayoutItem
+	json.NewDecoder(rec.Body).Decode(&got)
+	if rec.Code != http.StatusOK || len(got) != 8 || got[2].Key != colorID || got[2].SortOrder != 3 {
+		t.Errorf("บันทึกแล้วต้องได้ลำดับใหม่กลับมา ได้ %d %+v", rec.Code, got)
+	}
+}
+
+func TestHandler_SaveLayout_Errors(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantCode int
+		wantBody string
+	}{
+		{"JSON พัง", `{`, http.StatusBadRequest, `{"error":"invalid_json"}`},
+		{"ขาดช่องหลัก", `{"items":[{"key":"image","sort_order":1}]}`, http.StatusBadRequest, `{"error":"form_layout_invalid"}`},
+		{"ขาดช่องที่ร้านเพิ่ม (DB เช็ค)", strings.Replace(layoutBody(""), `{"key":"`+colorID+`","sort_order":3},`, "", 1), http.StatusBadRequest, `{"error":"form_layout_invalid"}`},
+		{"มีช่องที่ไม่มีจริง (DB เช็ค)", layoutBody(`,{"key":"` + missingID + `","sort_order":9}`), http.StatusBadRequest, `{"error":"form_layout_invalid"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeRepository{fields: []ProductField{{ID: colorID, Name: "สี", Type: "text"}}}
+			rec := sendRequest(newTestRouter(repo), http.MethodPut, "/api/v1/product-form-layout", tt.body)
+			if rec.Code != tt.wantCode || rec.Body.String() != tt.wantBody {
+				t.Errorf("ได้ %d %s ต้องได้ %d %s", rec.Code, rec.Body.String(), tt.wantCode, tt.wantBody)
+			}
+			if repo.layout != nil {
+				t.Error("ผิดต้องไม่บันทึก")
 			}
 		})
 	}

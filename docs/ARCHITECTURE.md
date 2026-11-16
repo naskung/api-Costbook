@@ -209,6 +209,8 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `POST /api/v1/product-fields` | เพิ่มช่อง |
 | | `PUT /api/v1/product-fields/{id}` | แก้ช่อง |
 | | `DELETE /api/v1/product-fields/{id}` | ลบช่อง (ค่าของช่องนี้ในทุกสินค้าหายไปด้วย) |
+| | `GET /api/v1/product-form-layout` | ลำดับทุกช่องในฟอร์มเพิ่ม / แก้สินค้า (ช่องหลัก + ช่องที่ร้านเพิ่ม) `[{key, sort_order}]` |
+| | `PUT /api/v1/product-form-layout` | บันทึกลำดับใหม่ (ร้านลากย้ายตำแหน่ง) ส่งครบทุกช่อง |
 | category ✅ | `GET /api/v1/product-categories` | หมวดหมู่สินค้า (เรียงตามชื่อ) + จำนวนสินค้าในแต่ละหมวด |
 | | `POST /api/v1/product-categories` | เพิ่มหมวด (ชื่อห้ามซ้ำ ไม่สนตัวพิมพ์เล็ก / ใหญ่ → 409 `category_name_taken`) |
 | | `PUT /api/v1/product-categories/{id}` | เปลี่ยนชื่อหมวด → สินค้าทุกตัวในหมวดเห็นชื่อใหม่ทันที |
@@ -465,7 +467,9 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | `track_delivery` | `false` | `true` = ติดตามการส่งสินค้า: เอกสารใหม่ `delivery_status = pending` (รอส่ง) แล้วผู้ใช้กดเปลี่ยนเป็น `shipped` / `received` / `false` = เอกสารใหม่เป็น `received` เลย (ลูกค้าได้ของทันที) |
 
 - `PUT /company` **ไม่ส่ง** 4 ช่องนี้มา = ใช้ค่าเดิม (Go ใช้ `*bool`, `nil` → SQL `COALESCE($n, column)`)
-- ช่องข้อมูลเพิ่มเติม (`/product-fields`): `{ "name", "type", "options", "show_in_list", "sort_order" }`
+- ช่องข้อมูลเพิ่มเติม (`/product-fields`): `{ "name", "type", "options", "show_in_list" }` — ไม่รับตำแหน่ง: เพิ่มใหม่อยู่ท้ายฟอร์มเสมอ (`sort_order` = เลขมากสุดของทั้งฟอร์ม + 1) / แก้ไม่เปลี่ยนตำแหน่ง
+- **ลำดับฟอร์มสินค้า** (ผู้ใช้ขอ 2026-11-16 "ย้ายตำแหน่งช่องได้ ทั้งหน้า ไม่ใช่แค่ช่องที่เพิ่ม"): ช่องหลัก 7 ช่อง (`image`, `name`, `code_category` = รหัส + หมวด, `unit`, `prices` = ต้นทุน + ราคาขาย, `sale_stock` = สถานะขาย / นับสต็อก / ขั้นต่ำ, `description`) เก็บเลขลำดับในตาราง `product_form_blocks` / ช่องที่ร้านเพิ่มใช้ `product_fields.sort_order` — **เลขชุดเดียวกัน** เรียงรวมกันได้ (เลขเท่ากันช่องหลักขึ้นก่อน)
+  - `PUT /product-form-layout` ต้องส่งครบพอดี (ช่องหลักทุกช่อง + ช่องที่ร้านเพิ่มทุกช่อง) ไม่งั้น 400 `form_layout_invalid` ไม่แก้อะไรเลย (transaction + ล็อกแถว `product_fields`)
   - `type` = `text` / `number` / `date` / `select` (`select` ต้องมี `options` ไม่งั้น 400 `field_options_required`)
   - ค่าของแต่ละสินค้าเก็บใน `products.custom_fields` (JSONB) แบบ `{"<id ช่อง>": "ค่า"}` — **ไม่ต้อง ALTER TABLE** เพิ่ม column ทุกครั้งที่ร้านอยากได้ช่องใหม่
   - ลบช่อง → ลบ key นั้นออกจากทุกสินค้าใน transaction เดียว (SQL `custom_fields - $1::text`)
@@ -480,7 +484,8 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | `company` | ข้อมูลร้าน (มีแถวเดียว `id = 1`, migration `000002_create_company` สร้างแถวว่างไว้ให้) | name, address, tax_id, branch, phone, logo (`BYTEA` ว่างได้), logo_content_type, vat_registered, prices_include_vat, use_cost_page (`000007`), track_delivery (`000015`), ai_key (key ของ Claude แบบเข้ารหัส ว่าง = ไม่มี `000009_ai_key`) |
 | `products` | สินค้า (migration `000003_create_products`) | id, code (ห้ามซ้ำถ้าไม่ว่าง), name, category_id (→ `product_categories`, ลบหมวด = `NULL`, `000011` — เดิมเป็นข้อความ `category`), description, unit, cost_price, sell_price, stock (≥ 0), min_stock, batch_quantity (> 0), track_stock, for_sale (false = วัสดุ `000012`), custom_fields (`JSONB`), image (`BYTEA` ว่างได้) + image_content_type + image_version (`000010`) |
 | `product_categories` | หมวดหมู่สินค้า (`000011_product_categories`, ชื่อห้ามซ้ำ `lower(btrim(name))`) | id, name |
-| `product_fields` | ช่องข้อมูลเพิ่มเติมที่ร้านตั้งเอง (`000007_flexible_shop`) | id, name, type (text / number / date / select), options (`TEXT[]`), show_in_list, sort_order |
+| `product_fields` | ช่องข้อมูลเพิ่มเติมที่ร้านตั้งเอง (`000007_flexible_shop`) | id, name, type (text / number / date / select), options (`TEXT[]`), show_in_list, sort_order (ลำดับในฟอร์ม ใช้เลขชุดเดียวกับ `product_form_blocks`) |
+| `product_form_blocks` | ลำดับช่องหลักของฟอร์มสินค้า (`000017_product_form_layout`) | key (image / name / code_category / unit / prices / sale_stock / description), sort_order |
 | `product_costs` | รายการต้นทุนของสินค้า (`000003`, ลบสินค้า → ลบด้วย) | id, product_id, line_no, type (material / labor / overhead), kind (fixed / percent), name, quantity, unit, unit_price, percent, amount, material_id (→ `products` วัสดุ ห้ามเป็นตัวเอง ลบวัสดุ = `NULL` `000012`) |
 | `cost_presets` | รายการต้นทุนที่ใช้บ่อย (`000007`) | id, type, kind, name, unit, unit_price, percent |
 | `invoices` | เอกสารขาย (`000004_create_invoices`) | id, doc_type (tax_invoice / receipt), invoice_no (ห้ามซ้ำ), issue_date, status (issued / cancelled), delivery_status (pending / shipped / received `000015`), seller_* + customer_* ณ วันที่ออก, note, prices_include_vat, items_total, discount, subtotal, vat, total, cancelled_at |

@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.15.0
+  version: 0.16.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -1140,6 +1140,67 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/CategoryNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /product-form-layout:
+    get:
+      tags: [field]
+      summary: ลำดับทุกช่องในฟอร์มเพิ่ม / แก้สินค้า
+      description: "ช่องหลัก (ย้ายได้ ลบไม่ได้) + ช่องที่ร้านเพิ่มเอง เรียงจากบนลงล่าง — code_category = รหัส + หมวดหมู่, prices = ต้นทุน + ราคาขาย, sale_stock = สถานะขาย / นับสต็อก / ขั้นต่ำ"
+      operationId: getProductFormLayout
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ลำดับช่อง
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FormLayoutItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [field]
+      summary: บันทึกลำดับช่องในฟอร์มสินค้า (ร้านลากย้ายตำแหน่ง)
+      description: "ส่งครบทุกช่องพอดี (ช่องหลัก 7 + ช่องที่ร้านเพิ่มทั้งหมด) พร้อมเลข sort_order — ขาด / เกิน / ซ้ำ / มีช่องที่ไม่มีจริง → 400 form_layout_invalid ไม่แก้อะไรเลย"
+      operationId: saveProductFormLayout
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/FormLayoutItem"
+      responses:
+        "200":
+          description: บันทึกแล้ว ได้ลำดับใหม่
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FormLayoutItem"
+        "400":
+          description: "JSON พัง (invalid_json) / ลำดับไม่ครบหรือผิด (form_layout_invalid)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: form_layout_invalid }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -2834,8 +2895,20 @@ components:
           example: [PLA, PETG, เรซิน]
         show_in_list:
           type: boolean
+      description: "ไม่มีตำแหน่ง — เพิ่มใหม่อยู่ท้ายฟอร์มเสมอ / แก้ไม่เปลี่ยนตำแหน่ง / ย้ายตำแหน่งใช้ PUT /product-form-layout (sort_order ที่ส่งมาไม่ถูกใช้)"
+
+    FormLayoutItem:
+      type: object
+      required: [key, sort_order]
+      properties:
+        key:
+          type: string
+          example: name
+          description: "ช่องหลัก image / name / code_category / unit / prices / sale_stock / description หรือ id ของช่องที่ร้านเพิ่มเอง"
         sort_order:
           type: integer
+          example: 2
+          description: น้อย = อยู่บน (ช่องหลักกับช่องที่ร้านเพิ่มใช้เลขชุดเดียวกัน)
 
     CostPreset:
       type: object

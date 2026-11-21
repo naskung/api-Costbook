@@ -33,5 +33,5 @@ func run() error {
 
 	r := router.New(cfg, db)
 	slog.Info("API พร้อมใช้งาน", "url", "http://localhost:"+cfg.Port+"/api/v1/health")
-	return r.Run(":" + cfg.Port)
+	return r.Run(cfg.Host + ":" + cfg.Port)
 }

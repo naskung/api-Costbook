@@ -746,6 +746,7 @@ productHandler.RegisterRoutes(api)
 
 | ชื่อ | ค่าเริ่มต้น | ใช้ทำอะไร |
 |---|---|---|
+| `HOST` | ว่าง (รับทุกเครื่อง) | `127.0.0.1` = รับเฉพาะเครื่องนี้ — ใช้ตอนมี Caddy ทำ https อยู่ข้างหน้า (ดู `../home-server.sh`) เครื่องอื่นจะเข้า API ตรง ๆ แบบ http ไม่ได้ |
 | `PORT` | `8080` | port ที่ API เปิดรอ |
 | `ALLOWED_ORIGIN` | `*` | เว็บที่อนุญาตให้เรียก API — ตอนพัฒนาใช้ `*` ได้ ขึ้น server จริงต้องใส่โดเมนเว็บ |
 | `DATABASE_URL` | **ต้องมี** | ในเครื่อง: `postgres://manas@localhost:5432/costbook?sslmode=disable` |

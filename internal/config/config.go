@@ -9,6 +9,8 @@ import (
 // Config ค่าที่ต่างกันแต่ละเครื่อง อ่านจาก environment variable (ตอนพัฒนาเก็บไว้ในไฟล์ .env)
 // AnthropicAPIKey / GeminiAPIKey ไม่ใส่ก็ได้ — ร้านใส่ key ของ Claude เองที่หน้าตั้งค่าได้, Gemini = AI ฟรีตอนร้านไม่มี key
 type Config struct {
+	// Host ว่าง = รับทุกเครื่องในวง LAN / 127.0.0.1 = รับเฉพาะเครื่องนี้ (มี Caddy ทำ https อยู่ข้างหน้า)
+	Host            string
 	Port            string
 	AllowedOrigin   string
 	DatabaseURL     string
@@ -30,6 +32,7 @@ type Config struct {
 // Load อ่านค่า config ทั้งหมด ถ้าขาดค่าที่จำเป็นจะคืน error
 func Load() (Config, error) {
 	cfg := Config{
+		Host:          os.Getenv("HOST"),
 		Port:          getEnv("PORT", "8080"),
 		AllowedOrigin: getEnv("ALLOWED_ORIGIN", "*"),
 		DatabaseURL:   os.Getenv("DATABASE_URL"),

@@ -3,6 +3,7 @@ package config
 import "testing"
 
 func TestLoad_Defaults(t *testing.T) {
+	t.Setenv("HOST", "")
 	t.Setenv("PORT", "")
 	t.Setenv("ALLOWED_ORIGIN", "")
 	t.Setenv("DATABASE_URL", "postgres://localhost/costbook")
@@ -11,6 +12,9 @@ func TestLoad_Defaults(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v, ต้องไม่มี error", err)
+	}
+	if cfg.Host != "" {
+		t.Errorf("Host = %q, ต้องว่าง (รับทุกเครื่อง)", cfg.Host)
 	}
 	if cfg.Port != "8080" {
 		t.Errorf("Port = %q, ต้องได้ %q", cfg.Port, "8080")
@@ -27,6 +31,7 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_CustomValues(t *testing.T) {
+	t.Setenv("HOST", "127.0.0.1")
 	t.Setenv("PORT", "9000")
 	t.Setenv("ALLOWED_ORIGIN", "https://costbook.example.com")
 	t.Setenv("DATABASE_URL", "postgres://localhost/costbook")
@@ -35,6 +40,9 @@ func TestLoad_CustomValues(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v, ต้องไม่มี error", err)
+	}
+	if cfg.Host != "127.0.0.1" {
+		t.Errorf("Host = %q, ต้องได้ %q", cfg.Host, "127.0.0.1")
 	}
 	if cfg.Port != "9000" {
 		t.Errorf("Port = %q, ต้องได้ %q", cfg.Port, "9000")

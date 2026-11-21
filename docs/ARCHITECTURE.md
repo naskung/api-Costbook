@@ -80,7 +80,7 @@ api-Costbook/
 │   ├── router/               สร้าง Gin router + รวม route ทั้งหมดไว้ที่เดียว
 │   ├── middleware/           ทำงานก่อนทุก request: cors, auth (Authenticated = ต้อง login, RequireRole = เฉพาะบาง role) (logger มากับ gin.Default() แล้ว)
 │   ├── helpers/              ช่วยงาน HTTP: WriteError, ServerError, DateRangeParams (?from=&to=), PageParams (?limit=&offset=), UUIDParam (:id), ReadImage (อ่านรูปที่อัปโหลด) (ตอบสำเร็จใช้ c.JSON ของ Gin)
-│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), cost (CostPerUnit), date (IsDate, DateRange, MonthRange, PreviousRange), check (IsUUID, IsTaxID, IsEmail, IsUsername), token (JWT), image (ImageContentType), secret (Encrypt / Decrypt)
+│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), document (DocumentAmounts, LineAmount — ยอดเงินของเอกสารขาย / ใบเสนอราคา ใช้ร่วมกัน), cost (CostPerUnit), date (IsDate, DateRange, MonthRange, PreviousRange), check (IsUUID, IsTaxID, IsEmail, IsUsername), token (JWT), image (ImageContentType), secret (Encrypt / Decrypt)
 │   └── features/
 │       ├── auth/             login + ข้อมูลผู้ใช้ที่ login อยู่ (ตาราง users) + ชื่อ role
 │       ├── user/             โปรไฟล์ของตัวเอง (ชื่อ / รหัสผ่าน / รูป) + จัดการผู้ใช้ของร้าน (เฉพาะเจ้าของร้าน)
@@ -99,6 +99,7 @@ api-Costbook/
 │       ├── stock/            คงเหลือ / รับเข้า (คิดต้นทุนเฉลี่ย) / เบิกออก (ตาราง stock_movements) + materials.go (ตัด / คืนวัสดุตามใบต้นทุน)
 │       ├── transaction/      รายรับ-รายจ่าย + สรุปรายเดือน
 │       ├── invoice/          เอกสารขาย (ใบกำกับภาษี / ใบเสร็จ): ออกใบ (รันเลข + ตัด stock + บันทึกรายรับ) / ยกเลิก
+│       ├── quotation/        ใบเสนอราคา: ออกใบ (รันเลข QT- ไม่ตัด stock ไม่บันทึกรายรับ) / ยกเลิก
 │       ├── dashboard/        ตัวเลขสรุปหน้าแรก + กราฟ / กำไรขั้นต้น / ขายดี / เทียบตลาด (อ่านอย่างเดียว ไม่มีตารางของตัวเอง)
 │       └── ai/               AI (Claude / Gemini ฟรี): เช็คราคาตลาด (ตาราง market_checks) + แชทผู้ช่วย + key ของร้าน (assistant.go, claude.go, gemini.go, prompt.go, tools.go, toolbox.go, market.go, chat.go, shop.go)
 ├── migrations/               ไฟล์ SQL สร้าง / แก้ตาราง เช่น 000001_create_users.up.sql / .down.sql
@@ -235,6 +236,10 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `POST /api/v1/invoices` | ออกเอกสารขาย — ร้านจด VAT ได้ใบกำกับภาษี ไม่จด ได้ใบเสร็จ |
 | | `POST /api/v1/invoices/{id}/cancel` | ยกเลิกเอกสาร |
 | | `PUT /api/v1/invoices/{id}/delivery` | เปลี่ยนสถานะการส่งสินค้า `{"delivery_status": "pending" / "shipped" / "received"}` |
+| quotation ✅ | `GET /api/v1/quotations?from=2026-11-01&to=2026-11-21&limit=&offset=` | ใบเสนอราคาของช่วงวันที่ (ล่าสุดอยู่บน) |
+| | `GET /api/v1/quotations/{id}` | ใบเสนอราคา 1 ใบ (Flutter เอาไปสร้าง PDF) |
+| | `POST /api/v1/quotations` | ออกใบเสนอราคา `QT-2026-0001` — ไม่ตัด stock ไม่บันทึกรายรับ |
+| | `POST /api/v1/quotations/{id}/cancel` | ยกเลิกใบเสนอราคา |
 | dashboard ✅ | `GET /api/v1/dashboard?from=2026-11-01&to=2026-11-16` | ตัวเลขสรุปหน้าแรก + ยอดขายรายวัน / ย้อนหลัง 6 เดือน / กำไรขั้นต้น / ขายดี / ตามหมวด / มูลค่าสต็อก / เทียบราคาตลาด |
 | ai ✅ | `GET /api/v1/ai/status` | ตอนนี้ใช้ AI ตัวไหน (Claude / Gemini ฟรี / ไม่มี) ค้นเว็บได้ไหม ร้านใส่ key เองไหม |
 | | `PUT /api/v1/ai/key` | ร้านใส่ key ของ Claude เอง (ลอง key กับ Anthropic ก่อน แล้วเก็บแบบเข้ารหัส) |
@@ -444,6 +449,17 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 - สถานะการส่งสินค้า (`delivery_status`, migration `000015`): `pending` รอส่ง / `shipped` ส่งแล้ว / `received` ลูกค้าได้รับแล้ว — ใบใหม่ได้ค่าตาม `company.track_delivery`, ใบเก่าก่อนมีระบบนี้ = `received` / `PUT /invoices/{id}/delivery` เปลี่ยนไปสถานะไหนก็ได้ (ย้อนได้ เผื่อกดผิด) ได้ใบเต็มกลับมา, สถานะที่ไม่มี 400 `invoice_delivery_status_invalid`, ใบที่ยกเลิกแล้ว 409 `invoice_already_cancelled` — แก้ได้อย่างเดียวในเอกสารขาย ไม่กระทบเงิน / สต็อก
 - dashboard: รายได้ / รายจ่าย / กำไรสุทธิของเดือน (คิดแบบเดียวกับ `/transactions/summary`), จำนวน + ยอดใบกำกับที่ยังไม่ยกเลิก, จำนวนสินค้า, สินค้าใกล้หมด (ไม่เกิน 5 ตัว เหลือน้อยสุดก่อน)
 
+### รายละเอียด ใบเสนอราคา (ทำแล้ว, `000018_quotations`, ผู้ใช้ขอ 2026-11-21)
+
+- เสนอราคาให้ลูกค้าก่อนขาย: **ไม่ตัด stock ไม่บันทึกรายรับ ไม่นับในภาพรวม** — สินค้าหมดสต็อกก็เสนอราคาได้ / วัสดุ (`for_sale = false`) ไม่ได้ 409 `product_not_for_sale`
+- แยกตาราง `quotations` จาก `invoices` เพราะหน้าภาพรวม / รายรับ-รายจ่ายรวมยอดจาก `invoices` ทุกใบ ถ้าใส่รวมกันต้องไปกรองออกทุก query
+- เลขที่ `QT-2026-0001` รันใหม่ทุกปี (ตาราง `quotation_numbers` แยกจากใบกำกับ)
+- ต้องมีชื่อลูกค้าเสมอ (400 `quotation_customer_required`) + วันยืนราคา `valid_until` ห้ามก่อน `issue_date` (400 `quotation_valid_until_invalid`) — Flutter ตั้งค่าเริ่มต้น 30 วันหลังวันที่ออก
+- คิด VAT ตามรูปแบบร้านตอนออก (`with_vat` = `company.vat_registered`, `prices_include_vat`) ด้วย `utils.DocumentAmounts` ตัวเดียวกับใบกำกับ / ส่วนลด 0 ถึงยอดรวม (400 `quotation_discount_invalid`)
+- เก็บข้อมูลร้าน / ลูกค้า / ชื่อสินค้า ณ วันที่ออก (แบบใบกำกับ) / ลบสินค้าทีหลังได้ — `quotation_items.product_id` กลายเป็น `NULL` (API ตอบ `""`) ใบยังมีชื่อ / ราคาครบ
+- แก้ / ลบไม่ได้ ผิดให้ยกเลิกแล้วออกใหม่ — ยกเลิก = เปลี่ยน `status` อย่างเดียว ยกเลิกซ้ำ 409 `quotation_already_cancelled`
+- ยังไม่มี: แปลงใบเสนอราคาเป็นใบกำกับ / ใบเสร็จ, สถานะลูกค้าตอบรับ / ปฏิเสธ (ยังไม่ได้สั่ง)
+
 ### รายละเอียด company (ทำแล้ว)
 
 **1 ระบบ = 1 ร้าน** — ร้านใหม่ติดตั้งระบบแยก (แบบ local) แล้วแก้ชื่อ / ที่อยู่ / โลโก้ผ่าน API หน้าเว็บ Flutter ใช้ตัวเดียวกันทุกร้าน ไม่ต้องแก้
@@ -491,6 +507,9 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 | `invoices` | เอกสารขาย (`000004_create_invoices`) | id, doc_type (tax_invoice / receipt), invoice_no (ห้ามซ้ำ), issue_date, status (issued / cancelled), delivery_status (pending / shipped / received `000015`), seller_* + customer_* ณ วันที่ออก, note, prices_include_vat, items_total, discount, subtotal, vat, total, cancelled_at |
 | `invoice_items` | รายการในเอกสาร (`000004`, สินค้าที่อยู่ในนี้ลบไม่ได้) | id, invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount, stock_cut (ตัด stock ไปไหม → ยกเลิกใบคืนเฉพาะที่ตัด), cost_price (ต้นทุน ณ วันที่ขาย `000008`) |
 | `invoice_numbers` | ตัวรันเลขที่ (`000004`) | doc_type + year (คู่กันเป็น key), last_number |
+| `quotations` | ใบเสนอราคา (`000018_quotations`) — ไม่ตัด stock ไม่มีรายรับ | id, quotation_no (ห้ามซ้ำ), issue_date, valid_until (≥ issue_date), status (issued / cancelled), seller_* + customer_* ณ วันที่ออก, note, with_vat, prices_include_vat, items_total, discount, subtotal, vat, total, cancelled_at |
+| `quotation_items` | รายการในใบเสนอราคา (`000018`) | id, quotation_id, line_no, product_id (ลบสินค้า = `NULL`), name, unit, quantity, unit_price, amount |
+| `quotation_numbers` | ตัวรันเลขที่ใบเสนอราคา (`000018`) | year (key), last_number |
 | `market_checks` | ผลเช็คราคาตลาดด้วย AI (`000008_ai_market`, ลบสินค้า → ลบด้วย) | id, product_id, our_cost_price, our_sell_price, retail_low / high / typical, wholesale_low / high / note, market_cost, suggested_price, confidence (low / medium / high), summary, advice, cost_items (`JSONB`), sources (`JSONB`), created_at |
 | `stock_movements` | ประวัติรับเข้า / เบิกออก (`000005_create_stock_movements`) | id, product_id, type (in / out), quantity, note, unit_cost, supplier, invoice_id, is_material (ตัด / คืนวัสดุอัตโนมัติ `000012`), created_at |
 | `transactions` | รายรับ-รายจ่าย (`000006_create_transactions`) | id, type (income / expense), category, amount (> 0), date, note, invoice_id (ห้ามซ้ำ) |
@@ -706,6 +725,7 @@ productHandler.RegisterRoutes(api)
 | คำนวณ VAT | คิด **ทั้งใบ** หลังหักส่วนลด ไม่คิดทีละบรรทัด (`invoice/logic.go` → `documentAmounts`): ราคาไม่รวม VAT → `vat = utils.VAT(ยอดหลังลด)` / ราคารวม VAT แล้ว → `subtotal = utils.PriceBeforeVAT(ยอดหลังลด)`, `vat = ยอด − subtotal` / ใบเสร็จ → `vat = 0` |
 | ตัด stock | เฉพาะสินค้าที่ `track_stock = true`: `UPDATE products SET stock = stock - $1 WHERE id = $2 AND stock >= $1` ถ้าไม่มีแถวไหนถูกแก้ = stock ไม่พอ → 409 `stock_not_enough` / สินค้าไม่นับสต็อกที่ใบต้นทุนผูกวัสดุ → ตัดวัสดุแทน (ไม่พอ 409 `material_not_enough`) / วัสดุ (`for_sale = false`) ขายไม่ได้ 409 `product_not_for_sale` |
 | ตัดวัสดุตอนรับเข้า | รับสินค้าที่ผลิตเสร็จเข้าสต็อก → ตัดวัสดุตามใบต้นทุน (ไม่พอ = ไม่ให้รับเข้า เว้นแต่ส่ง `skip_materials`) — ดูหัวข้อ 7 "รายละเอียด วัสดุในสต็อก" |
+| ใบเสนอราคา | ไม่ตัด stock ไม่บันทึกรายรับ ไม่นับในภาพรวม (ตารางแยก `quotations`) เลข `QT-2026-0001` / ยกเลิก = เปลี่ยนสถานะอย่างเดียว |
 | เลขที่เอกสาร | `INV-2026-0001` (ใบกำกับ) / `RC-2026-0001` (ใบเสร็จ) แยกเลขกัน รันใหม่ทุกปี ใช้ `INSERT ... ON CONFLICT (doc_type, year) DO UPDATE SET last_number = last_number + 1 RETURNING last_number` ใน transaction → เลขไม่ซ้ำแม้กดพร้อมกัน |
 | แก้ / ลบใบกำกับ | **ห้าม** ถ้าผิดให้ยกเลิก (`status = cancelled`) แล้วออกใบใหม่ |
 | ยกเลิกใบกำกับ | คืน stock + ลบรายรับที่ผูกกับใบนั้น (ทำใน transaction เดียว) |

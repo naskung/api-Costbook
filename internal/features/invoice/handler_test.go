@@ -56,11 +56,11 @@ func (f *fakeRepository) Create(ctx context.Context, req InvoiceRequest) (Invoic
 	if f.createErr != nil {
 		return Invoice{}, f.createErr
 	}
-	m := documentAmounts(req.Items, req.Discount, docTaxInvoice, false)
+	m := utils.DocumentAmounts(itemsTotal(req.Items), req.Discount, true, false)
 	return Invoice{
 		ID: "new-id", DocType: docTaxInvoice, InvoiceNo: invoiceNumber("INV", 2026, 1), Status: "issued",
-		CustomerName: req.CustomerName, ItemsTotal: m.itemsTotal, Discount: m.discount,
-		Subtotal: m.subtotal, VAT: m.vat, Total: m.total,
+		CustomerName: req.CustomerName, ItemsTotal: m.ItemsTotal, Discount: m.Discount,
+		Subtotal: m.Subtotal, VAT: m.VAT, Total: m.Total,
 	}, nil
 }
 

@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.16.0
+  version: 0.17.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -39,6 +39,8 @@ tags:
     description: รายรับ-รายจ่าย และสรุปรายเดือน (ต้อง login)
   - name: invoice
     description: เอกสารขาย (ใบกำกับภาษี / ใบเสร็จรับเงิน ตามรูปแบบร้าน) — ออกใบแล้วตัด stock + บันทึกรายรับให้อัตโนมัติ แก้ / ลบไม่ได้ ผิดให้ยกเลิก (ต้อง login)
+  - name: quotation
+    description: ใบเสนอราคา — เสนอราคาให้ลูกค้าก่อนขาย ไม่ตัด stock ไม่บันทึกรายรับ ไม่นับในภาพรวม แก้ / ลบไม่ได้ ผิดให้ยกเลิก (ต้อง login)
   - name: dashboard
     description: ตัวเลขสรุปหน้าแรก (ต้อง login)
   - name: ai
@@ -1777,6 +1779,154 @@ paths:
         "500":
           $ref: "#/components/responses/ServerError"
 
+  /quotations:
+    get:
+      tags: [quotation]
+      summary: ใบเสนอราคาของช่วงวันที่ (ล่าสุดอยู่บน)
+      operationId: listQuotations
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: รายการใบเสนอราคา (ข้อมูลย่อ)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/QuotationSummary"
+        "400":
+          $ref: "#/components/responses/DateRangeOrPageInvalid"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [quotation]
+      summary: ออกใบเสนอราคา
+      description: |
+        เลขที่ `QT-ปี-เลข` รันใหม่ทุกปี — บันทึกใบ + รายการสินค้าใน DB transaction เดียว (เก็บข้อมูลร้าน / ชื่อสินค้า ณ วันที่ออก)
+        **ไม่ตัด stock ไม่บันทึกรายรับ** (ยังไม่ได้ขายจริง) สินค้าหมดสต็อกก็เสนอราคาได้
+        คิด VAT ตามรูปแบบร้าน (PUT /company): จด VAT → บวก VAT 7% (หรือถอด VAT ถ้า prices_include_vat) / ไม่จด → ไม่มี VAT
+        VAT คิดจากยอดรวมทั้งใบหลังหักส่วนลด (discount) — ต้องมีชื่อลูกค้าเสมอ
+      operationId: createQuotation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuotationRequest"
+      responses:
+        "201":
+          description: ออกใบแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quotation"
+        "400":
+          description: ข้อมูลที่ส่งมาผิด
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                invalid_json:
+                  value: { error: invalid_json }
+                quotation_date_invalid:
+                  summary: "วันที่ต้องเป็นรูปแบบ 2026-11-21"
+                  value: { error: quotation_date_invalid }
+                quotation_valid_until_invalid:
+                  summary: ไม่ส่งวันยืนราคา / ยืนราคาถึงก่อนวันที่ออก
+                  value: { error: quotation_valid_until_invalid }
+                quotation_customer_required:
+                  summary: ต้องมีชื่อลูกค้า
+                  value: { error: quotation_customer_required }
+                quotation_customer_tax_id_invalid:
+                  summary: เลขผู้เสียภาษีลูกค้าไม่ใช่ตัวเลข 13 หลัก
+                  value: { error: quotation_customer_tax_id_invalid }
+                quotation_items_required:
+                  value: { error: quotation_items_required }
+                quotation_item_invalid:
+                  summary: สินค้าไม่มี id / จำนวน ≤ 0 / ราคาติดลบ
+                  value: { error: quotation_item_invalid }
+                quotation_discount_invalid:
+                  summary: ส่วนลดติดลบ / มากกว่ายอดรวม
+                  value: { error: quotation_discount_invalid }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/ProductNotFound"
+        "409":
+          description: สินค้าเป็นวัสดุ (for_sale = false) เสนอราคาไม่ได้
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: product_not_for_sale }
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /quotations/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    get:
+      tags: [quotation]
+      summary: ใบเสนอราคา 1 ใบ พร้อมรายการสินค้า (Flutter เอาไปสร้าง PDF)
+      operationId: getQuotation
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ใบเสนอราคา
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quotation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/QuotationNotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /quotations/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/ID"
+    post:
+      tags: [quotation]
+      summary: ยกเลิกใบเสนอราคา
+      description: เปลี่ยนสถานะเป็น cancelled อย่างเดียว (ไม่มี stock / รายรับให้คืน)
+      operationId: cancelQuotation
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: ยกเลิกแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quotation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/QuotationNotFound"
+        "409":
+          description: ใบนี้ยกเลิกไปแล้ว
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: quotation_already_cancelled }
+        "500":
+          $ref: "#/components/responses/ServerError"
+
   /dashboard:
     get:
       tags: [dashboard]
@@ -2276,6 +2426,13 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
           example: { error: invoice_not_found }
+    QuotationNotFound:
+      description: ไม่มีใบเสนอราคานี้
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { error: quotation_not_found }
 
     ProductCodeTaken:
       description: รหัส / บาร์โค้ดซ้ำกับสินค้าตัวอื่น
@@ -3369,6 +3526,182 @@ components:
           minimum: 0
           description: ราคาต่อหน่วย (ก่อน VAT หรือรวม VAT ตาม prices_include_vat ของร้าน)
           example: 50
+
+    QuotationSummary:
+      type: object
+      required: [id, quotation_no, issue_date, valid_until, status, customer_name, total]
+      properties:
+        id:
+          type: string
+          format: uuid
+        quotation_no:
+          type: string
+          example: QT-2026-0001
+        issue_date:
+          type: string
+          format: date
+          example: "2026-11-21"
+        valid_until:
+          type: string
+          format: date
+          description: ยืนราคาถึงวันนี้
+          example: "2026-12-21"
+        status:
+          type: string
+          enum: [issued, cancelled]
+        customer_name:
+          type: string
+          example: บริษัท ลูกค้า จำกัด
+        total:
+          type: number
+          example: 107
+
+    Quotation:
+      type: object
+      required: [id, quotation_no, issue_date, valid_until, status, seller_name, seller_address, seller_tax_id, seller_branch, seller_phone,
+        customer_name, customer_address, customer_tax_id, customer_branch, note, with_vat, prices_include_vat, items_total, discount,
+        subtotal, vat, total, items]
+      properties:
+        id:
+          type: string
+          format: uuid
+        quotation_no:
+          type: string
+          example: QT-2026-0001
+        issue_date:
+          type: string
+          format: date
+          example: "2026-11-21"
+        valid_until:
+          type: string
+          format: date
+          description: ยืนราคาถึงวันนี้
+          example: "2026-12-21"
+        status:
+          type: string
+          enum: [issued, cancelled]
+        seller_name:
+          type: string
+          description: ข้อมูลผู้ขาย ณ วันที่ออกใบ
+          example: ร้านตัวอย่าง
+        seller_address:
+          type: string
+        seller_tax_id:
+          type: string
+          example: "0105555555555"
+        seller_branch:
+          type: string
+          example: สำนักงานใหญ่
+        seller_phone:
+          type: string
+        customer_name:
+          type: string
+          example: บริษัท ลูกค้า จำกัด
+        customer_address:
+          type: string
+        customer_tax_id:
+          type: string
+        customer_branch:
+          type: string
+        note:
+          type: string
+        with_vat:
+          type: boolean
+          description: ตอนออกร้านจด VAT ไหม (false = ไม่มี VAT ในใบ)
+        prices_include_vat:
+          type: boolean
+          description: true = ราคาในบรรทัดรวม VAT แล้ว
+        items_total:
+          type: number
+          description: รวมราคาสินค้าทุกบรรทัด
+          example: 110
+        discount:
+          type: number
+          description: ส่วนลดทั้งบิล
+          example: 10
+        subtotal:
+          type: number
+          description: มูลค่าก่อน VAT (หลังหักส่วนลด)
+          example: 100
+        vat:
+          type: number
+          description: VAT 7% ของยอดรวมทั้งใบ (with_vat = false → 0)
+          example: 7
+        total:
+          type: number
+          description: ยอดรวมสุทธิ
+          example: 107
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotationItem"
+
+    QuotationItem:
+      type: object
+      required: [id, product_id, name, unit, quantity, unit_price, amount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          description: ว่าง = สินค้าถูกลบไปแล้ว (ใบยังมีชื่อ / ราคาครบ)
+        name:
+          type: string
+          description: ชื่อสินค้า ณ วันที่ออกใบ
+          example: กาแฟเย็น
+        unit:
+          type: string
+          example: แก้ว
+        quantity:
+          type: integer
+          example: 2
+        unit_price:
+          type: number
+          example: 50
+        amount:
+          type: number
+          description: quantity × unit_price
+          example: 100
+
+    QuotationRequest:
+      type: object
+      required: [issue_date, valid_until, customer_name, items]
+      properties:
+        issue_date:
+          type: string
+          format: date
+          example: "2026-11-21"
+        valid_until:
+          type: string
+          format: date
+          description: ยืนราคาถึงวันนี้ (ห้ามก่อน issue_date)
+          example: "2026-12-21"
+        customer_name:
+          type: string
+          example: บริษัท ลูกค้า จำกัด
+        customer_address:
+          type: string
+          example: 99 ถนนพหลโยธิน กรุงเทพฯ 10400
+        customer_tax_id:
+          type: string
+          description: ตัวเลข 13 หลัก (ว่างได้)
+          example: "0105555555555"
+        customer_branch:
+          type: string
+          example: สำนักงานใหญ่
+        note:
+          type: string
+        discount:
+          type: number
+          minimum: 0
+          description: ส่วนลดทั้งบิล (บาท) ห้ามเกินรวมราคาสินค้า
+          example: 10
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/InvoiceItemRequest"
 
     Dashboard:
       type: object

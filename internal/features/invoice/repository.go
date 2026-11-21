@@ -122,7 +122,8 @@ func (r *PostgresRepository) Create(ctx context.Context, req InvoiceRequest) (In
 	if err != nil {
 		return Invoice{}, err
 	}
-	amounts := documentAmounts(req.Items, req.Discount, docType, shop.pricesIncludeVAT)
+	// VAT คิดจากยอดรวมทั้งใบหลังหักส่วนลด (ใบเสร็จ = ร้านไม่จด VAT ไม่มี VAT)
+	amounts := utils.DocumentAmounts(itemsTotal(req.Items), req.Discount, docType == docTaxInvoice, shop.pricesIncludeVAT)
 	invoiceID, err := insertInvoice(ctx, tx, req, shop, docType, invoiceNo, amounts)
 	if err != nil {
 		return Invoice{}, err
@@ -136,7 +137,7 @@ func (r *PostgresRepository) Create(ctx context.Context, req InvoiceRequest) (In
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO transactions (type, category, amount, date, note, invoice_id)
-		VALUES ('income', 'sales', $1, $2::date, $3, $4)`, amounts.total, req.IssueDate, invoiceNo, invoiceID)
+		VALUES ('income', 'sales', $1, $2::date, $3, $4)`, amounts.Total, req.IssueDate, invoiceNo, invoiceID)
 	if err != nil {
 		return Invoice{}, err
 	}
@@ -226,7 +227,7 @@ func nextInvoiceNo(ctx context.Context, tx pgx.Tx, docType, issueDate string) (s
 }
 
 // insertInvoice บันทึกหัวเอกสาร คืน id ใบ
-func insertInvoice(ctx context.Context, tx pgx.Tx, req InvoiceRequest, shop seller, docType, invoiceNo string, m money) (string, error) {
+func insertInvoice(ctx context.Context, tx pgx.Tx, req InvoiceRequest, shop seller, docType, invoiceNo string, m utils.DocAmounts) (string, error) {
 	var id string
 	err := tx.QueryRow(ctx, `
 		INSERT INTO invoices (doc_type, invoice_no, issue_date, delivery_status,
@@ -238,7 +239,7 @@ func insertInvoice(ctx context.Context, tx pgx.Tx, req InvoiceRequest, shop sell
 		docType, invoiceNo, req.IssueDate, deliveryStatusFor(shop.trackDelivery),
 		shop.name, shop.address, shop.taxID, shop.branch, shop.phone,
 		req.CustomerName, req.CustomerAddress, req.CustomerTaxID, req.CustomerBranch,
-		req.Note, shop.pricesIncludeVAT && docType == docTaxInvoice, m.itemsTotal, m.discount, m.subtotal, m.vat, m.total).
+		req.Note, shop.pricesIncludeVAT && docType == docTaxInvoice, m.ItemsTotal, m.Discount, m.Subtotal, m.VAT, m.Total).
 		Scan(&id)
 	return id, err
 }
@@ -265,7 +266,7 @@ func addItem(ctx context.Context, tx pgx.Tx, invoiceID string, lineNo int, item 
 		INSERT INTO invoice_items (invoice_id, line_no, product_id, name, unit, quantity, unit_price, amount, stock_cut, cost_price)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		invoiceID, lineNo, item.ProductID, name, unit, item.Quantity, item.UnitPrice,
-		lineAmount(item.Quantity, item.UnitPrice), trackStock, costPrice)
+		utils.LineAmount(item.Quantity, item.UnitPrice), trackStock, costPrice)
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image/color"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -354,6 +355,56 @@ func TestHandler_DeleteLogo_Fail(t *testing.T) {
 			req := httptest.NewRequest(http.MethodDelete, "/api/v1/company/logo", nil)
 			rec := sendRequest(newTestRouter(tt.repo), req, tt.login)
 
+			checkError(t, rec, tt.wantStatus, tt.wantError)
+		})
+	}
+}
+
+func TestHandler_Icon(t *testing.T) {
+	tests := []struct {
+		name     string
+		repo     *fakeRepository
+		query    string
+		wantSize int
+	}{
+		{"มีโลโก้ร้าน ขอ 512 ได้ 512 × 512", &fakeRepository{logo: Logo{Data: pngLogo(t, 40, 20, color.Black), ContentType: "image/png"}}, "?size=512", 512},
+		{"ยังไม่มีโลโก้ ได้ไอคอนเริ่มต้น (ไม่ใช่ 404)", &fakeRepository{}, "?size=32", 32},
+		{"ไม่ส่ง size ได้ 192", &fakeRepository{}, "", 192},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// ไม่ต้อง login (browser โหลดไอคอนเองไม่ส่ง token)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/company/icon"+tt.query, nil)
+			rec := sendRequest(newTestRouter(tt.repo), req, false)
+
+			if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" {
+				t.Fatalf("ได้ %d %q, ต้องได้ 200 image/png", rec.Code, rec.Header().Get("Content-Type"))
+			}
+			icon := decodeIcon(t, rec.Body.Bytes())
+			if icon.Bounds().Dx() != tt.wantSize || icon.Bounds().Dy() != tt.wantSize {
+				t.Errorf("ขนาด = %v, ต้องได้ %d × %d", icon.Bounds(), tt.wantSize, tt.wantSize)
+			}
+		})
+	}
+}
+
+func TestHandler_Icon_Fail(t *testing.T) {
+	tests := []struct {
+		name       string
+		repo       *fakeRepository
+		query      string
+		wantStatus int
+		wantError  string
+	}{
+		{"ขนาดที่ไม่มี ได้ 400", &fakeRepository{}, "?size=100", http.StatusBadRequest, "icon_size_invalid"},
+		{"DB พัง ได้ 500", &fakeRepository{err: errors.New("db down")}, "?size=192", http.StatusInternalServerError, "server_error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/company/icon"+tt.query, nil)
+			rec := sendRequest(newTestRouter(tt.repo), req, false)
 			checkError(t, rec, tt.wantStatus, tt.wantError)
 		})
 	}

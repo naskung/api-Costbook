@@ -9,6 +9,7 @@ import (
 	"github.com/naskung/api-Costbook/internal/config"
 	"github.com/naskung/api-Costbook/internal/features/ai"
 	"github.com/naskung/api-Costbook/internal/features/auth"
+	"github.com/naskung/api-Costbook/internal/features/barcode"
 	"github.com/naskung/api-Costbook/internal/features/category"
 	"github.com/naskung/api-Costbook/internal/features/company"
 	"github.com/naskung/api-Costbook/internal/features/cost"
@@ -62,6 +63,10 @@ func New(cfg config.Config, db *pgxpool.Pool) *gin.Engine {
 	categoryRepo := category.NewPostgresRepository(db)
 	categoryHandler := category.NewHandler(categoryRepo)
 	categoryHandler.RegisterRoutes(api, authRequired)
+
+	// สแกนบาร์โค้ดในฟอร์มสินค้า → ถาม Open Food Facts (ฟรี) เอาชื่อ / ยี่ห้อ / ขนาดมากรอกให้
+	barcodeHandler := barcode.NewHandler(barcode.NewOpenFoodFacts())
+	barcodeHandler.RegisterRoutes(api, authRequired)
 
 	costRepo := cost.NewPostgresRepository(db)
 	costHandler := cost.NewHandler(costRepo)

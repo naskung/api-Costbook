@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: CostBook API
-  version: 0.17.0
+  version: 0.19.0
   description: |
     API ของ CostBook — คำนวณต้นทุนสินค้า, ใบกำกับภาษี, รายรับ-รายจ่าย, stock
 
@@ -39,6 +39,8 @@ tags:
     description: รายรับ-รายจ่าย และสรุปรายเดือน (ต้อง login)
   - name: invoice
     description: เอกสารขาย (ใบกำกับภาษี / ใบเสร็จรับเงิน ตามรูปแบบร้าน) — ออกใบแล้วตัด stock + บันทึกรายรับให้อัตโนมัติ แก้ / ลบไม่ได้ ผิดให้ยกเลิก (ต้อง login)
+  - name: barcode
+    description: หาชื่อสินค้าจากเลขบาร์โค้ดสากล (ถาม Open Food Facts ฐานข้อมูลฟรี) ไว้กรอกฟอร์มสินค้าให้ — ไม่บันทึกอะไรลง DB (ต้อง login)
   - name: quotation
     description: ใบเสนอราคา — เสนอราคาให้ลูกค้าก่อนขาย ไม่ตัด stock ไม่บันทึกรายรับ ไม่นับในภาพรวม แก้ / ลบไม่ได้ ผิดให้ยกเลิก (ต้อง login)
   - name: dashboard
@@ -483,6 +485,41 @@ paths:
                   value: { error: company_tax_id_invalid }
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /company/icon:
+    get:
+      tags: [company]
+      summary: ไอคอนแอป / favicon (PNG สี่เหลี่ยมจัตุรัส)
+      description: |
+        ไม่ต้อง login (browser / มือถือโหลดไอคอนเองไม่ส่ง token) — ใช้ใน manifest.json, favicon, ไอคอนหน้าจอโฮมของ iPhone / iPad
+        มีโลโก้ร้าน (PNG / JPG) = โลโก้วางกลางพื้นขาว เว้นขอบ 10% / ยังไม่มีโลโก้ หรือโลโก้เป็น WebP = ไอคอนเริ่มต้นของ CostBook (พื้นส้ม หนังสือสีขาว) — ตอบ 200 เสมอ
+      operationId: getCompanyIcon
+      parameters:
+        - name: size
+          in: query
+          required: false
+          description: ขนาด (กว้าง = สูง) ไม่ส่ง = 192
+          schema:
+            type: integer
+            enum: [32, 64, 180, 192, 512]
+            default: 192
+      responses:
+        "200":
+          description: ไฟล์ไอคอน PNG
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: ขนาดที่ไม่มีให้เลือก
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: icon_size_invalid }
         "500":
           $ref: "#/components/responses/ServerError"
 
@@ -1778,6 +1815,55 @@ paths:
               example: { error: invoice_already_cancelled }
         "500":
           $ref: "#/components/responses/ServerError"
+
+  /barcodes/{code}:
+    parameters:
+      - name: code
+        in: path
+        required: true
+        description: เลขบาร์โค้ด ตัวเลขล้วน 8 / 12 / 13 / 14 หลัก
+        schema:
+          type: string
+          example: "8850124003850"
+    get:
+      tags: [barcode]
+      summary: หาชื่อ / ยี่ห้อ / ขนาดสินค้าจากเลขบาร์โค้ด
+      description: |
+        API ไปถาม Open Food Facts (ฟรี ไม่ต้องมี key) — ส่วนใหญ่มีแต่อาหาร / เครื่องดื่ม / ของใช้ สินค้าไทยประมาณ 11,000 รายการ
+        มีชื่อไทยใช้ชื่อไทยก่อน / ไม่มีราคา (ร้านกรอกเอง) / รอนานสุด 8 วินาที
+      operationId: getBarcodeProduct
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: เจอสินค้า
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BarcodeProduct"
+        "400":
+          description: ไม่ใช่เลขบาร์โค้ด (เช่น รหัสที่ร้านตั้งเอง CF001) — ไม่ไปถามฐานข้อมูลภายนอก
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: barcode_invalid }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: ไม่มีสินค้านี้ในฐานข้อมูล (กรอกเอง)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: barcode_not_found }
+        "502":
+          description: ต่อ Open Food Facts ไม่ได้ / ช้าเกิน / ตอบผิดปกติ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example: { error: barcode_lookup_failed }
 
   /quotations:
     get:
@@ -3526,6 +3612,26 @@ components:
           minimum: 0
           description: ราคาต่อหน่วย (ก่อน VAT หรือรวม VAT ตาม prices_include_vat ของร้าน)
           example: 50
+
+    BarcodeProduct:
+      type: object
+      required: [code, name, brand, quantity]
+      properties:
+        code:
+          type: string
+          example: "8850124003850"
+        name:
+          type: string
+          description: ชื่อสินค้า (มีชื่อไทยใช้ชื่อไทยก่อน)
+          example: Nestle Pure Life
+        brand:
+          type: string
+          description: ยี่ห้อ (ไม่มี = "")
+          example: Nestlé
+        quantity:
+          type: string
+          description: ขนาด / ปริมาณ (ไม่มี = "")
+          example: 600 mL
 
     QuotationSummary:
       type: object

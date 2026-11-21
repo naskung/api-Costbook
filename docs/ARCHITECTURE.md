@@ -80,7 +80,7 @@ api-Costbook/
 │   ├── router/               สร้าง Gin router + รวม route ทั้งหมดไว้ที่เดียว
 │   ├── middleware/           ทำงานก่อนทุก request: cors, auth (Authenticated = ต้อง login, RequireRole = เฉพาะบาง role) (logger มากับ gin.Default() แล้ว)
 │   ├── helpers/              ช่วยงาน HTTP: WriteError, ServerError, DateRangeParams (?from=&to=), PageParams (?limit=&offset=), UUIDParam (:id), ReadImage (อ่านรูปที่อัปโหลด) (ตอบสำเร็จใช้ c.JSON ของ Gin)
-│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), document (DocumentAmounts, LineAmount — ยอดเงินของเอกสารขาย / ใบเสนอราคา ใช้ร่วมกัน), cost (CostPerUnit), date (IsDate, DateRange, MonthRange, PreviousRange), check (IsUUID, IsTaxID, IsEmail, IsUsername), token (JWT), image (ImageContentType), secret (Encrypt / Decrypt)
+│   ├── utils/                ฟังก์ชันล้วน ๆ ไม่แตะ HTTP / DB: money (Round2, Profit), tax (VAT, PriceBeforeVAT), image (ImageContentType, SquareIcon — ย่อรูปลงสี่เหลี่ยมจัตุรัสทำไอคอน), document (DocumentAmounts, LineAmount — ยอดเงินของเอกสารขาย / ใบเสนอราคา ใช้ร่วมกัน), cost (CostPerUnit), date (IsDate, DateRange, MonthRange, PreviousRange), check (IsUUID, IsTaxID, IsEmail, IsUsername), token (JWT), image (ImageContentType), secret (Encrypt / Decrypt)
 │   └── features/
 │       ├── auth/             login + ข้อมูลผู้ใช้ที่ login อยู่ (ตาราง users) + ชื่อ role
 │       ├── user/             โปรไฟล์ของตัวเอง (ชื่อ / รหัสผ่าน / รูป) + จัดการผู้ใช้ของร้าน (เฉพาะเจ้าของร้าน)
@@ -100,6 +100,7 @@ api-Costbook/
 │       ├── transaction/      รายรับ-รายจ่าย + สรุปรายเดือน
 │       ├── invoice/          เอกสารขาย (ใบกำกับภาษี / ใบเสร็จ): ออกใบ (รันเลข + ตัด stock + บันทึกรายรับ) / ยกเลิก
 │       ├── quotation/        ใบเสนอราคา: ออกใบ (รันเลข QT- ไม่ตัด stock ไม่บันทึกรายรับ) / ยกเลิก
+│       ├── barcode/          หาชื่อสินค้าจากเลขบาร์โค้ดสากล (ถาม Open Food Facts ฟรี ไม่มีตาราง) — openfoodfacts.go = ตัวเรียก API ภายนอก
 │       ├── dashboard/        ตัวเลขสรุปหน้าแรก + กราฟ / กำไรขั้นต้น / ขายดี / เทียบตลาด (อ่านอย่างเดียว ไม่มีตารางของตัวเอง)
 │       └── ai/               AI (Claude / Gemini ฟรี): เช็คราคาตลาด (ตาราง market_checks) + แชทผู้ช่วย + key ของร้าน (assistant.go, claude.go, gemini.go, prompt.go, tools.go, toolbox.go, market.go, chat.go, shop.go)
 ├── migrations/               ไฟล์ SQL สร้าง / แก้ตาราง เช่น 000001_create_users.up.sql / .down.sql
@@ -195,6 +196,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | company ✅ | `GET /api/v1/company` | ข้อมูลร้าน (ผู้ขาย) — ไม่ต้อง login |
 | | `PUT /api/v1/company` | แก้ข้อมูลร้าน |
 | | `GET /api/v1/company/logo` | โลโก้ร้าน (ตอบเป็นรูป) — ไม่ต้อง login |
+| | `GET /api/v1/company/icon?size=192` | ไอคอนแอป / favicon PNG สี่เหลี่ยมจัตุรัส (32 / 64 / 180 / 192 / 512) — โลโก้ร้านวางกลางพื้นขาว ไม่มีโลโก้ = ไอคอนเริ่มต้น CostBook — ไม่ต้อง login |
 | | `PUT /api/v1/company/logo` | อัปโหลดโลโก้ (multipart ช่อง `logo`, PNG / JPG / WebP ไม่เกิน 1 MB) |
 | | `DELETE /api/v1/company/logo` | ลบโลโก้ |
 | product ✅ | `GET /api/v1/products?q=&category_id=&kind=&low=&limit=&offset=` | รายการสินค้า (ไม่ส่งอะไร = ทั้งหมด / หน้ารายการสินค้าโหลดทีละ 20 พร้อมตัวกรอง) |
@@ -236,6 +238,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 | | `POST /api/v1/invoices` | ออกเอกสารขาย — ร้านจด VAT ได้ใบกำกับภาษี ไม่จด ได้ใบเสร็จ |
 | | `POST /api/v1/invoices/{id}/cancel` | ยกเลิกเอกสาร |
 | | `PUT /api/v1/invoices/{id}/delivery` | เปลี่ยนสถานะการส่งสินค้า `{"delivery_status": "pending" / "shipped" / "received"}` |
+| barcode ✅ | `GET /api/v1/barcodes/{code}` | หาชื่อ / ยี่ห้อ / ขนาดสินค้าจากเลขบาร์โค้ด (Open Food Facts ฟรี) ไว้กรอกฟอร์มสินค้าให้ |
 | quotation ✅ | `GET /api/v1/quotations?from=2026-11-01&to=2026-11-21&limit=&offset=` | ใบเสนอราคาของช่วงวันที่ (ล่าสุดอยู่บน) |
 | | `GET /api/v1/quotations/{id}` | ใบเสนอราคา 1 ใบ (Flutter เอาไปสร้าง PDF) |
 | | `POST /api/v1/quotations` | ออกใบเสนอราคา `QT-2026-0001` — ไม่ตัด stock ไม่บันทึกรายรับ |
@@ -261,7 +264,7 @@ Request → Gin (logger, recovery) → middleware (cors, auth) → handler ─�
 
 ในตารางเขียน path แบบ `{id}` แต่ในโค้ด Gin เขียนเป็น `:id` เช่น `api.GET("/products/:id", ...)` แล้วอ่านค่าด้วย `helpers.UUIDParam(c, "id", "product_not_found")` (id ไม่ใช่ UUID → ตอบ 404 ให้เลย ไม่ส่งไป DB)
 
-ทุก endpoint ยกเว้น health / auth/login / GET company / GET company/logo **ต้อง login** (`authRequired`)
+ทุก endpoint ยกเว้น health / auth/login / GET company / GET company/logo / GET company/icon **ต้อง login** (`authRequired`)
 endpoint ที่เขียนว่า **เฉพาะเจ้าของร้าน** → role อื่นได้ 403 `forbidden` (ตอนนี้มีแค่จัดการผู้ใช้ ที่เหลือทุก role ใช้ได้เหมือนกัน)
 **ช่วงวันที่** `?from=2026-11-01&to=2026-11-16` (นับรวมทั้ง 2 วัน / วันเดียวส่ง from = to / ไม่ส่งทั้งคู่ = ทั้งเดือนนี้) อ่านด้วย `helpers.DateRangeParams(c)` ได้ `utils.DateRange` ไปใช้ใน SQL: `date BETWEEN $1::date AND $2::date` — ส่งไม่ครบ / ผิดรูปแบบ / from หลัง to / ยาวเกิน 366 วัน → 400 `date_range_invalid` (ผู้ใช้ขอ 2026-11-16 เปลี่ยนจากเลือกทีละเดือน `?month=` เป็นเลือกช่วงวันที่)
 รายละเอียด field ของทุก endpoint ดูใน Swagger (`docs/openapi.yaml`)
@@ -460,7 +463,18 @@ route ใหม่ที่ต้อง login ก่อน → ใส่ `authRe
 - แก้ / ลบไม่ได้ ผิดให้ยกเลิกแล้วออกใหม่ — ยกเลิก = เปลี่ยน `status` อย่างเดียว ยกเลิกซ้ำ 409 `quotation_already_cancelled`
 - ยังไม่มี: แปลงใบเสนอราคาเป็นใบกำกับ / ใบเสร็จ, สถานะลูกค้าตอบรับ / ปฏิเสธ (ยังไม่ได้สั่ง)
 
+### รายละเอียด หาชื่อสินค้าจากบาร์โค้ด (ทำแล้ว, ผู้ใช้ขอ 2026-11-21 "เอาของฟรีก่อน")
+
+- `GET /barcodes/{code}` → API ไปถาม **Open Food Facts** (`https://world.openfoodfacts.org/api/v2/product/{code}`) ฟรี ไม่ต้องมี key ไม่บันทึกอะไรลง DB
+- เลขต้องเป็นตัวเลขล้วน 8 / 12 / 13 / 14 หลัก ไม่งั้น 400 `barcode_invalid` (ไม่ไปถามข้างนอก) / ไม่เจอ หรือเจอแต่ไม่มีชื่อ 404 `barcode_not_found` / ต่อไม่ได้ ช้าเกิน 8 วินาที ตอบผิดปกติ 502 `barcode_lookup_failed` (log ไว้ใน `api.log`)
+- ชื่อ: ชื่อไทย (`product_name_th`) ก่อน → ชื่อหลัก → ชื่ออังกฤษ / ยี่ห้อเอาตัวแรก (`brands` คั่นด้วย `,`) / ขนาด (`quantity`) เช่น `600 mL` / **ไม่มีราคา** ร้านกรอกเอง
+- ข้อมูลส่วนใหญ่เป็นอาหาร / เครื่องดื่ม / ของใช้ สินค้าไทยประมาณ 11,000 รายการ (เช็ค 2026-11-21) — งานที่ร้านทำเองไม่มีบาร์โค้ดสากลอยู่แล้ว
+- ส่งแค่เลขบาร์โค้ดออกไป + `User-Agent: CostBook/1.0` (ไม่ใส่ข้อมูลร้าน)
+- ยังไม่มี: ให้ AI ค้นเว็บเมื่อไม่เจอ, ดึงรูปสินค้ามาด้วย (ยังไม่ได้สั่ง)
+
 ### รายละเอียด company (ทำแล้ว)
+
+- **ไอคอนแอป** `GET /company/icon?size=` (ผู้ใช้ขอ 2026-11-21 "ไอคอนตามรูปที่เพิ่ม ไม่มีก็ใช้ไอคอนเริ่มต้น + favicon"): โลโก้ PNG / JPG → ย่อลงสี่เหลี่ยมจัตุรัสพื้นขาว เว้นขอบ 10% (`utils.SquareIcon` ใช้ standard library ล้วน) / ไม่มีโลโก้ หรือเป็น WebP (Go อ่านไม่ได้ถ้าไม่เพิ่ม package) → `company/default_icon.png` (ฝังในโปรแกรมด้วย `go:embed` พื้นส้ม หนังสือสีขาว แบบโลโก้เริ่มต้นในแอป) / ตอบ 200 เสมอ, ขนาดอื่น 400 `icon_size_invalid` / หน้าเว็บใช้ใน `manifest.json` (192 / 512), ไอคอน iPhone (180), favicon (64)
 
 **1 ระบบ = 1 ร้าน** — ร้านใหม่ติดตั้งระบบแยก (แบบ local) แล้วแก้ชื่อ / ที่อยู่ / โลโก้ผ่าน API หน้าเว็บ Flutter ใช้ตัวเดียวกันทุกร้าน ไม่ต้องแก้
 
